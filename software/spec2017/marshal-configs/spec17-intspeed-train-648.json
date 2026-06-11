@@ -1,0 +1,16 @@
+{
+  "name" : "spec17-intspeed-train-648",
+  "base" : "br-base.json",
+  "workdir" : "..",
+  "host-init" : "build-intspeed.sh train 648.exchange2_s",
+  "overlay" : "speckle/build/overlay/intspeed/train",
+  "rootfs-size" : "3GiB",
+  "outputs" : ["/output"],
+  "post_run_hook" : "handle-results.py -d train -s intspeed",
+  "jobs" : [
+    {
+      "name": "648.exchange2_s",
+      "command": "./intspeed.sh 648.exchange2_s --threads 1"
+    }
+  ]
+}

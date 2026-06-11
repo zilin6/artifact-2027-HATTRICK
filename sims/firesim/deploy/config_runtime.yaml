@@ -1,0 +1,127 @@
+# Run-time configuration for the FireSim Simulation Manager
+# See https://docs.fires.im/en/stable/Advanced-Usage/Manager/Manager-Configuration-Files.html for documentation of all of these params.
+
+run_farm:
+  base_recipe: run-farm-recipes/externally_provisioned.yaml
+  recipe_arg_overrides:
+    # REQUIRED: default platform used for run farm hosts. this is a class specifying
+    # how to run simulations on a run farm host.
+    default_platform: XilinxAlveoU200InstanceDeployManager
+
+    # REQUIRED: default directory where simulations are run out of on the run farm hosts
+    default_simulation_dir: /path/to/firesim-results
+
+    # REQUIRED: default fpga db file that enumerates what fpgas are available on the machine (used by XilinxU* Deploy Managers)
+    default_fpga_db: /opt/firesim-db.json
+
+    # REQUIRED: List of unique hostnames/IP addresses, each with their
+    # corresponding specification that describes the properties of the host.
+    #
+    # Ex:
+    # run_farm_hosts_to_use:
+    #     # use localhost which is described by "four_fpgas_spec" below.
+    #     - localhost: four_fpgas_spec
+    #     # supply IP address, which points to a machine that is described
+    #     # by "four_fpgas_spec" below.
+    #     - "111.111.1.111": four_fpgas_spec
+    run_farm_hosts_to_use:
+        - localhost: one_fpga_spec
+
+metasimulation:
+  metasimulation_enabled: false
+  # vcs or verilator. use vcs-debug or verilator-debug for waveform generation
+  metasimulation_host_simulator: verilator
+  # plusargs passed to the simulator for all metasimulations
+  metasimulation_only_plusargs: "+fesvr-step-size=128 +max-cycles=100000000"
+  # plusargs passed to the simulator ONLY FOR vcs metasimulations
+  metasimulation_only_vcs_plusargs: "+vcs+initreg+0 +vcs+initmem+0"
+
+# DOCREF START: target_config area
+target_config:
+    topology: no_net_config
+    no_net_num_nodes: 1
+    link_latency: 6405
+    switching_latency: 10
+    net_bandwidth: 200
+    profile_interval: -1
+
+    # This references a section from config_hwdb.yaml for fpga-accelerated simulation
+    # or from config_build_recipes.yaml for metasimulation
+    # In homogeneous configurations, use this to set the hardware config deployed
+    # for all simulators
+    # default_hw_config: alveo_u200_firesim_rocket_singlecore_no_nic
+    # default_hw_config: my_boom
+    default_hw_config: my_boom_bypass
+    # Advanced: Specify any extra plusargs you would like to provide when
+    # booting the simulator (in both FPGA-sim and metasim modes). This is
+    # a string, with the contents formatted as if you were passing the plusargs
+    # at command line, e.g. "+a=1 +b=2"
+    # Enable BOOM architectural commit dumps around the current suspicious
+    # return chain in hello_world_static:
+    #   read_meminfo_sample_local  0x115f8
+    #   _stdio_fopen               0x12330
+    #   __GI_isatty                0x13f00
+    #   __GI_tcgetattr             0x13f20
+    # Window:
+    #   0x115f8 - 0x13fa0 => 71160 - 81824
+    # First-pass DCE watch setup for protected mcf debugging:
+    # - focus on write-side corruption (store / reenc / bypass)
+    # - keep load / wb / pe off to reduce noise
+    # - watch the guest DRAM physical window that this run actually uses
+    #   (observed pages/root around 0x101... - 0x103...)
+    #   0x100000000 - 0x11fffffff
+    # plusarg_passthrough: "+commit_dump_enable=0 +commit_dump_pc_lo=0 +commit_dump_pc_hi=18446744073709551615 +dce_watch_load_enable=1 +dce_watch_store_enable=1 +dce_watch_reenc_enable=1 +dce_watch_bypass_enable=1 +wb_watch_enable=1 +pe_watch_enable=1 +dce_watch_primary_enable=1 +dce_watch_s2_enable=1 +mshr_watch_sec_enable=1 +mshr_watch_replay_enable=1 +probe_watch_enable=1 +dce_watch_paddr_lo=1 +dce_watch_paddr_hi=18446744073709551615 +inclusive_watch_sinkc_enable=0 +inclusive_watch_mshr_enable=0 +inclusive_watch_sinkd_enable=0 +inclusive_watch_sourcea_enable=0 +inclusive_watch_sourcec_enable=0 +inclusive_watch_sourced_enable=0 +inclusive_watch_sourced_bypass_src_enable=0 +inclusive_watch_sourced_ctr_queue_enable=0 +inclusive_watch_paddr_lo=0 +inclusive_watch_paddr_hi=18446744073709551615"
+    plusarg_passthrough: "+commit_dump_enable=0 +commit_dump_pc_lo=0 +commit_dump_pc_hi=18446744073709551615 +dce_watch_load_enable=0 +dce_watch_store_enable=0 +dce_watch_reenc_enable=0 +dce_watch_bypass_enable=0 +wb_watch_enable=0 +pe_watch_enable=0 +dce_watch_primary_enable=0 +dce_watch_s2_enable=0 +mshr_watch_sec_enable=0 +mshr_watch_replay_enable=0 +dce_watch_paddr_lo=0 +dce_watch_paddr_hi=18446744073709551615 +inclusive_watch_sinkc_enable=0 +inclusive_watch_mshr_enable=0 +inclusive_watch_sinkd_enable=0 +inclusive_watch_sourcea_enable=0 +inclusive_watch_paddr_lo=0 +inclusive_watch_paddr_hi=18446744073709551615 +l2_crypto_assert_enable=1 +dcache_crypto_assert_enable=1 +icache_crypto_assert_enable=1 +fe_crypto_assert_enable=1"
+    # plusarg_passthrough: "+commit_dump_enable=0 +commit_dump_pc_lo=79992 +commit_dump_pc_hi=81728 +dce_watch_load_enable=0 +dce_watch_store_enable=0 +dce_watch_reenc_enable=1 +dce_watch_bypass_enable=1 +wb_watch_enable=1 +pe_watch_enable=0 +dce_watch_paddr_lo=1 +dce_watch_paddr_hi=18446744073709551615 +inclusive_counter_watch_enable=0"
+    # plusarg_passthrough: "+commit_dump_enable=0 +commit_dump_pc_lo=79992 +commit_dump_pc_hi=81728 +dce_watch_load_enable=0 +dce_watch_store_enable=0 +dce_watch_reenc_enable=0 +dce_watch_bypass_enable=0 +wb_watch_enable=0 +pe_watch_enable=0 +dce_watch_paddr_lo=0 +dce_watch_paddr_hi=18446744073709551615 +inclusive_counter_watch_enable=0"
+# DOCREF END: target_config area
+
+tracing:
+    # enable: yes
+    # enable: yes
+    enable: no
+
+    # Trace output formats. Only enabled if "enable" is set to "yes" above
+    # 0 = human readable; 1 = binary (compressed raw data); 2 = flamegraph (stack
+    # unwinding -> Flame Graph)
+    output_format: 0
+
+    # Trigger selector.
+    # 0 = no trigger; 1 = cycle count trigger; 2 = program counter trigger; 3 =
+    # instruction trigger
+    selector: 0
+    start: 0
+    end: -1
+
+autocounter:
+    read_rate: 0
+
+workload:
+    # workload_name: zephyr-hello.json
+    # workload_name: br-base.json
+    workload_name: spec17-intspeed-test-600.json
+    terminate_on_completion: no
+    suffix_tag: null
+
+host_debug:
+    # When enabled (=yes), Zeros-out FPGA-attached DRAM before simulations
+    # begin (takes 2-5 minutes).
+    # In general, this is not required to produce deterministic simulations on
+    # target machines running linux. Enable if you observe simulation non-determinism.
+    zero_out_dram: no
+    # If disable_synth_asserts: no, simulation will print assertion message and
+    # terminate simulation if synthesized assertion fires.
+    # If disable_synth_asserts: yes, simulation ignores assertion firing and
+    # continues simulation.
+    disable_synth_asserts: no
+
+# DOCREF START: Synthesized Prints
+synth_print:
+    # Start and end cycles for outputting synthesized prints.
+    # They are given in terms of the base clock and will be converted
+    # for each clock domain.
+    start: 0
+    end: -1
+    # When enabled (=yes), prefix print output with the target cycle at which the print was triggered
+    cycle_prefix: yes
+# DOCREF END: Synthesized Prints

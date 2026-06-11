@@ -1,0 +1,10 @@
+build/
+build_vm_noaddr/
+__pycache__/
+*.pyc
+*.log
+*.pid
+run-logs-*/
+bg-run-*/
+single-rerun-*/
+embench-*.md

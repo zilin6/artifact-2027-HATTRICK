@@ -1,0 +1,16 @@
+{
+  "name" : "spec17-intspeed-test-623",
+  "base" : "br-base.json",
+  "workdir" : "..",
+  "host-init" : "build-intspeed.sh test 623.xalancbmk_s",
+  "overlay" : "speckle/build/overlay/intspeed/test",
+  "rootfs-size" : "3GiB",
+  "outputs" : ["/output"],
+  "post_run_hook" : "handle-results.py -d test -s intspeed",
+  "jobs" : [
+    {
+      "name": "623.xalancbmk_s",
+      "command": "./intspeed.sh 623.xalancbmk_s --threads 1"
+    }
+  ]
+}

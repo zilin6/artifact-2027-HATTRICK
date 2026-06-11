@@ -1,0 +1,16 @@
+{
+  "name" : "spec17-intspeed-ref-641",
+  "base" : "br-base.json",
+  "workdir" : "..",
+  "host-init" : "build-intspeed.sh ref 641.leela_s",
+  "overlay" : "speckle/build/overlay/intspeed/ref",
+  "rootfs-size" : "3GiB",
+  "outputs" : ["/output"],
+  "post_run_hook" : "handle-results.py -d ref -s intspeed",
+  "jobs" : [
+    {
+      "name": "641.leela_s",
+      "command": "./intspeed.sh 641.leela_s --threads 1"
+    }
+  ]
+}

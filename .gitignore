@@ -1,0 +1,7 @@
+release-assets/
+dist/
+*.log
+*.jou
+*.str
+.Xil/
+

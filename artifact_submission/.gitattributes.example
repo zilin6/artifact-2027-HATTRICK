@@ -1,0 +1,10 @@
+# Optional Git LFS rules. Prefer GitHub Release assets for artifact binaries.
+# If the project decides to use Git LFS, copy these lines into the repository
+# root `.gitattributes` before adding the large files.
+
+*.img filter=lfs diff=lfs merge=lfs -text
+*.bit filter=lfs diff=lfs merge=lfs -text
+*.mcs filter=lfs diff=lfs merge=lfs -text
+*.tar.gz filter=lfs diff=lfs merge=lfs -text
+*.tar.zst filter=lfs diff=lfs merge=lfs -text
+

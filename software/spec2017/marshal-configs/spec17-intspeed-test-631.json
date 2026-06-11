@@ -1,0 +1,16 @@
+{
+  "name" : "spec17-intspeed-test-631",
+  "base" : "br-base.json",
+  "workdir" : "..",
+  "host-init" : "build-intspeed.sh test 631.deepsjeng_s",
+  "overlay" : "speckle/build/overlay/intspeed/test",
+  "rootfs-size" : "3GiB",
+  "outputs" : ["/output"],
+  "post_run_hook" : "handle-results.py -d test -s intspeed",
+  "jobs" : [
+    {
+      "name": "631.deepsjeng_s",
+      "command": "./intspeed.sh 631.deepsjeng_s --threads 1"
+    }
+  ]
+}

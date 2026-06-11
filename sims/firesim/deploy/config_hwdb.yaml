@@ -1,0 +1,10 @@
+# Hardware config database fragment for the artifact FireSim runs.
+#
+# Replace the two file:// paths below with the local paths of the release assets
+# after downloading them. The bitstream and driver bundle must be kept matched.
+
+my_boom_bypass:
+    bitstream_tar: file:///absolute/path/to/release-assets/firesim-my_boom_bypass-2026-06-09.tar.gz
+    driver_tar: file:///absolute/path/to/release-assets/firesim-my_boom_bypass-2026-06-09-driver-bundle.tar.gz
+    deploy_quintuplet_override: null
+    custom_runtime_config: null

@@ -1,0 +1,7 @@
+build/
+__pycache__/
+*.pyc
+*.log
+*.pid
+run-logs-*/
+embench-*.md
