@@ -18,6 +18,10 @@ Large binary artifacts are distributed as release assets, not as normal Git
 files. Download all files from the release asset list before running the
 experiments, then verify them with `checksums.sha256`.
 
+Anonymous binary release assets are available at:
+
+https://github.com/HATTRICK11111/artifact-2027-HATTRICK/releases/tag/artifact-v1
+
 ## Repository Layout
 
 ```text
@@ -48,8 +52,7 @@ The release assets contain:
 Download all release assets into a local `release-assets/` directory and verify:
 
 ```bash
-cd release-assets
-sha256sum -c checksums.sha256
+sha256sum -c release-assets/checksums.sha256
 ```
 
 Then restore source snapshots and SPEC disk images as described in
@@ -89,4 +92,3 @@ my_boom_bypass:
     bitstream_tar: file:///absolute/path/to/firesim-my_boom_bypass-2026-06-09.tar.gz
     driver_tar: file:///absolute/path/to/firesim-my_boom_bypass-2026-06-09-driver-bundle.tar.gz
 ```
-
