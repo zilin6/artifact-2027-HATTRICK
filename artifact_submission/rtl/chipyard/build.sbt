@@ -363,7 +363,9 @@ def withInitCheck(p: Project, genDirName: String): Project = {
   val checkTask = Def.task {
     val root = (ThisBuild / baseDirectory).value
     val dir = root / s"generators/$genDirName"
-    val looksInitialized = (dir / ".git").exists
+    val hasGitMetadata = (dir / ".git").exists
+    val sourceOnlyArtifactTree = artifactSmallBoomOnly && dir.exists && Option(dir.listFiles).exists(_.nonEmpty)
+    val looksInitialized = hasGitMetadata || sourceOnlyArtifactTree
     if (!dir.exists || !looksInitialized) {
       sys.error(
         s"Generator '$genDirName' is not initialized at '" + dir.getAbsolutePath +

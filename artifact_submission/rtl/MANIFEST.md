@@ -1,8 +1,8 @@
 # RTL Source Manifest
 
 The RTL artifact is stored as source files under `artifact_submission/rtl/chipyard`.
-No patch files are used for the primary artifact. For compilation, apply the
-snapshot as an overlay onto a complete Chipyard workspace using
+No patch files are used for the primary artifact. For compilation, restore the
+artifact onto an official Chipyard `1.13.0` workspace using
 `prepare_chipyard_workspace.sh`.
 
 Required checked-in Verilog resource files are included even when upstream
@@ -12,7 +12,7 @@ Required checked-in Verilog resource files are included even when upstream
 
 | Path | Purpose |
 | --- | --- |
-| `prepare_chipyard_workspace.sh` | Applies the artifact RTL sources to a complete Chipyard workspace. |
+| `prepare_chipyard_workspace.sh` | Restores the artifact RTL sources to a complete Chipyard workspace. |
 | `chipyard/generators/chipyard` | Chipyard configuration, including SmallBoomV3 crypto configuration. |
 | `chipyard/generators/boom` | BOOM V3 core RTL with cache/address crypto control and key handling. |
 | `chipyard/generators/rocket-chip` | Rocket-chip CSR, key-engine, subsystem, and dependency sources. |
@@ -37,9 +37,12 @@ The following are intentionally excluded from Git:
 
 The supported build flow relies on the target Chipyard workspace for unmodified
 support submodules and build infrastructure such as `tools/DRAMSim2`, `tools/axe`,
-`tools/torture`, sbt/ivy caches, and the Chipyard-managed environment. Set
-`CHIPYARD_ARTIFACT_SMALLBOOM_ONLY=1` so `build.sbt` compiles only the
-SmallBoomV3 artifact path and skips unrelated optional generators.
+`tools/torture`, sbt/ivy caches, and the Chipyard-managed environment. The
+reproducible base is official Chipyard `1.13.0`; the restore script replaces
+only artifact-owned generator subtrees and preserves unmodified generator
+subtrees from that base. In artifact mode, `build.sbt` accepts source-only replacement generator trees without `.git` metadata. Set `CHIPYARD_ARTIFACT_SMALLBOOM_ONLY=1` so `build.sbt`
+compiles only the SmallBoomV3 artifact path and skips unrelated optional
+generators.
 
 ## Anonymization
 

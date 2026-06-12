@@ -1,6 +1,4 @@
-component	commit	note
-chipyard-root	69eba860a352343e4ac6b6df0f3638a79a86ec78	Official Chipyard release tag 1.13.0 used as the clean base workspace
-boom-core	36cddeb976fac077e47d932e680d9314f88f31fb	BOOM V3 crypto RTL overlay source
-rocket-chip	08f6b306ce2c8997f4845ee448580f62b7113b70	Custom CSR and key-engine RTL overlay source
-inclusive-cache	3b360314311dfdb704cca83fd8599bc26e7ae3f8	L2 crypto and re-encrypt RTL overlay source
-testchipip	6f5957577920b5c4482e60026a1c1d497a875d23	DRAMSim2 cache-line transaction model overlay source
+component	source	note
+chipyard-base	69eba860a352343e4ac6b6df0f3638a79a86ec78	Official Chipyard release tag 1.13.0 used as the reproducible base workspace
+artifact-rtl-sources	artifact repository: artifact_submission/rtl/chipyard	Submitted RTL sources copied into the artifact; no local-only submodule commit is required to fetch them
+artifact-restore-script	artifact_submission/rtl/prepare_chipyard_workspace.sh	Replaces artifact-owned generator subtrees on top of the official Chipyard base and preserves unmodified base generator subtrees

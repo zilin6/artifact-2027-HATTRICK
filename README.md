@@ -62,7 +62,7 @@ for the VM/crypto Embench variants.
 ## RTL and Embench Environment
 
 Use a complete Chipyard workspace for RTL simulator builds and apply the artifact
-RTL overlay before compiling:
+RTL restore before compiling:
 
 ```bash
 /path/to/artifact/artifact_submission/rtl/prepare_chipyard_workspace.sh /path/to/chipyard-work

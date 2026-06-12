@@ -5,11 +5,15 @@ usage() {
   cat <<'USAGE'
 Usage: prepare_chipyard_workspace.sh [--dry-run] /path/to/full-chipyard
 
-Overlay the artifact RTL sources onto an existing, fully initialized Chipyard
-workspace. The target workspace must provide the normal Chipyard environment,
-submodules, support tools, and caches. This script overwrites matching source
-files from the artifact but intentionally keeps the target workspace's env.sh,
-Git metadata, generated outputs, and unmodified support tool submodules.
+Restore the artifact RTL sources into an existing, fully initialized Chipyard
+workspace. The target workspace must be the official Chipyard 1.13.0 checkout
+with normal submodules, support tools, environment setup, and caches.
+
+This script replaces only the artifact-owned generator subtrees that carry the
+submitted RTL changes, then restores the artifact's top-level Chipyard files,
+Verilator scripts, and FireSim deploy configuration. Unmodified generator
+subtrees remain from the official Chipyard base commit, not from any local
+machine-specific generator snapshot.
 
 Example:
   ./artifact_submission/rtl/prepare_chipyard_workspace.sh /path/to/chipyard-work
@@ -20,30 +24,47 @@ Example:
 USAGE
 }
 
-if [[ $# -lt 1 || $# -gt 2 ]]; then
+dry_run=0
+
+while [[ $# -gt 0 ]]; do
+  case "${1}" in
+    --dry-run)
+      dry_run=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --*)
+      echo "error: unknown option: ${1}" >&2
+      usage >&2
+      exit 2
+      ;;
+    *)
+      if [[ -n "${target_root:-}" ]]; then
+        echo "error: multiple target workspaces were provided" >&2
+        usage >&2
+        exit 2
+      fi
+      target_root=${1%/}
+      shift
+      ;;
+  esac
+done
+
+if [[ -z "${target_root:-}" ]]; then
   usage >&2
   exit 2
 fi
 
-dry_run=0
-if [[ "${1:-}" == "--dry-run" ]]; then
-  dry_run=1
-  shift
-fi
-
-if [[ $# -ne 1 || "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  usage
-  exit 0
-fi
-
-target_root=${1%/}
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-overlay_root="${script_dir}/chipyard"
+snapshot_root="${script_dir}/chipyard"
 expected_chipyard_tag=1.13.0
 expected_chipyard_commit=69eba860a352343e4ac6b6df0f3638a79a86ec78
 
-if [[ ! -d "${overlay_root}" ]]; then
-  echo "error: artifact RTL snapshot not found: ${overlay_root}" >&2
+if [[ ! -d "${snapshot_root}" ]]; then
+  echo "error: artifact RTL snapshot not found: ${snapshot_root}" >&2
   exit 1
 fi
 
@@ -58,7 +79,7 @@ if current_commit=$(git -C "${target_root}" rev-parse HEAD 2>/dev/null); then
   fi
 fi
 
-for required in env.sh generators sims/verilator scripts/sbt-launch.jar; do
+for required in env.sh generators sims/verilator scripts/sbt-launch.jar tools/DRAMSim2 tools/torture generators/tracegen; do
   if [[ ! -e "${target_root}/${required}" ]]; then
     echo "error: target does not look like a complete Chipyard workspace; missing ${required}" >&2
     exit 1
@@ -67,26 +88,26 @@ done
 
 copy_file() {
   local rel=$1
-  if [[ ! -f "${overlay_root}/${rel}" ]]; then
+  if [[ ! -f "${snapshot_root}/${rel}" ]]; then
     return 0
   fi
-  echo "overlay file: ${rel}"
+  echo "restore file: ${rel}"
   if [[ ${dry_run} -eq 0 ]]; then
     mkdir -p "${target_root}/$(dirname "${rel}")"
-    cp -p "${overlay_root}/${rel}" "${target_root}/${rel}"
+    cp -p "${snapshot_root}/${rel}" "${target_root}/${rel}"
   fi
 }
 
 copy_tree() {
   local rel=$1
-  if [[ ! -d "${overlay_root}/${rel}" ]]; then
+  if [[ ! -d "${snapshot_root}/${rel}" ]]; then
     return 0
   fi
-  echo "overlay tree: ${rel}"
+  echo "restore tree: ${rel}"
   if [[ ${dry_run} -eq 0 ]]; then
     mkdir -p "${target_root}/${rel}"
     (
-      cd "${overlay_root}/${rel}"
+      cd "${snapshot_root}/${rel}"
       tar \
         --exclude='.git' \
         --exclude='.gitmodules' \
@@ -108,6 +129,40 @@ copy_tree() {
   fi
 }
 
+replace_tree() {
+  local rel=$1
+  if [[ ! -d "${snapshot_root}/${rel}" ]]; then
+    echo "error: artifact replacement tree is missing: ${rel}" >&2
+    exit 1
+  fi
+  echo "replace tree: ${rel}"
+  if [[ ${dry_run} -eq 0 ]]; then
+    rm -rf -- "${target_root:?}/${rel}"
+    mkdir -p "${target_root}/$(dirname "${rel}")"
+    (
+      cd "${snapshot_root}/${rel}"
+      tar \
+        --exclude='.git' \
+        --exclude='.gitmodules' \
+        --exclude='.codex' \
+        --exclude='target' \
+        --exclude='generated-src' \
+        --exclude='output' \
+        --exclude='*.log' \
+        --exclude='*.pid' \
+        --exclude='*.pyc' \
+        --exclude='*.vcd' \
+        --exclude='*.fsdb' \
+        --exclude='*.dump' \
+        -cf - .
+    ) | (
+      mkdir -p "${target_root}/${rel}"
+      cd "${target_root}/${rel}"
+      tar -xf -
+    )
+  fi
+}
+
 copy_file build.sbt
 copy_file common.mk
 copy_file variables.mk
@@ -117,17 +172,17 @@ copy_file tools/torture.mk
 
 copy_tree project
 copy_tree scripts
-copy_tree generators/chipyard
-copy_tree generators/boom
-copy_tree generators/rocket-chip
-copy_tree generators/rocket-chip-inclusive-cache
-copy_tree generators/testchipip
+replace_tree generators/chipyard
+replace_tree generators/boom
+replace_tree generators/rocket-chip
+replace_tree generators/rocket-chip-inclusive-cache
+replace_tree generators/testchipip
 copy_tree sims/verilator
 copy_tree sims/firesim/deploy
 
 if [[ ${dry_run} -eq 1 ]]; then
   echo "dry-run complete; no files were changed"
 else
-  echo "overlay complete: ${target_root}"
+  echo "restore complete: ${target_root}"
   echo "next: cd ${target_root} && source ./env.sh && cd sims/verilator && CHIPYARD_ARTIFACT_SMALLBOOM_ONLY=1 make CONFIG=SmallBoomV3Config -j8"
 fi

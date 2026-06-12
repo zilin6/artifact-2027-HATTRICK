@@ -4,16 +4,16 @@ This directory contains a source-only RTL snapshot for the submitted design. It
 is intentionally copied without Git metadata, generated build products, logs,
 waveforms, simulator binaries, or bitstream files.
 
-The recommended RTL build flow is to apply this snapshot as an overlay onto a
-complete Chipyard workspace. The snapshot is suitable for source review and for
-overlaying modified design files, but it is not intended to replace Chipyard's
-normal setup, support submodules, local sbt/ivy caches, or simulator tool
-directories.
+The recommended RTL build flow is to restore this snapshot onto an official
+Chipyard `1.13.0` workspace. The official Chipyard commit is the reproducible
+base; artifact-specific RTL changes are provided by the committed files in this
+repository. The flow does not rely on local-only BOOM/Rocket submodule commits
+being fetchable by reviewers.
 
 ## Layout
 
 ```text
-prepare_chipyard_workspace.sh  Overlay artifact RTL onto a full Chipyard tree
+prepare_chipyard_workspace.sh  Restore artifact RTL onto a full Chipyard tree
 chipyard/
   build.sbt
   common.mk
@@ -37,9 +37,9 @@ chipyard/
 `SOURCE_VERSION.tsv` records the source identifiers used by this artifact. The
 clean base workspace is the official Chipyard release `1.13.0` (tag commit
 `69eba860a352343e4ac6b6df0f3638a79a86ec78`). For strict reproduction, prepare a complete Chipyard workspace
-at that release before applying the artifact overlay. A nearby initialized
-Chipyard checkout may work for source review, but cycle and RTL regression
-reproduction should use the recorded Chipyard release.
+at that release before applying the artifact restore script. Local-only
+submodule commit IDs are intentionally not required; the artifact repository
+contains the submitted RTL source trees that differ from the base release.
 
 ## Recommended Build Flow
 
@@ -50,7 +50,7 @@ should already contain Chipyard support tools and submodules such as
 Chipyard-managed conda environment, and any sbt/ivy cache needed for local
 compilation.
 
-Then overlay the artifact RTL sources onto that workspace:
+Then restore the artifact RTL sources onto that workspace:
 
 ```bash
 /path/to/artifact/artifact_submission/rtl/prepare_chipyard_workspace.sh /path/to/chipyard-work
@@ -60,10 +60,13 @@ cd sims/verilator
 CHIPYARD_ARTIFACT_SMALLBOOM_ONLY=1 make CONFIG=SmallBoomV3Config -j8
 ```
 
-The overlay script intentionally does not overwrite the target workspace's
-`env.sh` or unmodified support tool submodules. It copies the artifact's design
-sources, Chipyard configuration, Verilator scripts, and FireSim deploy
-configuration over the complete Chipyard checkout.
+The restore script intentionally keeps the target workspace's `env.sh`, support
+tools, and unmodified generator subtrees from official Chipyard `1.13.0`. It
+replaces the artifact-owned generator subtrees (`chipyard`, `boom`,
+`rocket-chip`, `rocket-chip-inclusive-cache`, and `testchipip`) so stale files
+from the base release are not compiled together with artifact sources.
+
+In this artifact mode, `build.sbt` also accepts source-only artifact generator trees without `.git` metadata.
 
 Set `CHIPYARD_ARTIFACT_SMALLBOOM_ONLY=1` for artifact RTL builds. This
 SmallBoom-only build mode keeps the BOOM/Rocket/TestChipIP/inclusive-cache path
@@ -80,7 +83,7 @@ notes. That failure mode is separate from RTL elaboration.
 
 Building directly inside `artifact_submission/rtl/chipyard` is not the supported
 flow because the artifact excludes large or unmodified Chipyard support content.
-Use the overlay flow above for RTL compilation and cache-crypto regression runs.
+Use the restore flow above for RTL compilation and cache-crypto regression runs.
 
 ## Excluded Files
 
