@@ -29,7 +29,7 @@ gem install jekyll-redirect-from
 
 ``` bash
 # Clone this git repository
-git clone https://github.com/chipsalliance/chisel3
+git clone git@github.com:chipsalliance/chisel3
 
 # Change into the directory where the clone lives
 cd chisel3/website

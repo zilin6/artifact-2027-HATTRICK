@@ -31,10 +31,19 @@ object AsconCryptoParams {
     if (x.getWidth >= width) x(width - 1, 0) else Cat(0.U((width - x.getWidth).W), x)
   }
 
-  def nonce(counter: UInt, paddr: UInt): UInt = {
-    val ctrEff = zeroExtendTo(counter, 64) & "hffffffffffffff00".U(64.W)
+  def nonce(epoch: UInt, paddr: UInt, wordCtr: UInt = 0.U(8.W)): UInt = {
+    val epochEff = zeroExtendTo(epoch, 64)
+    val paddrEff = zeroExtendTo(paddr >> 3, 56)
+    val wordCtrEff = zeroExtendTo(wordCtr, 8)
+    Cat(epochEff, paddrEff, wordCtrEff)
+  }
+
+  // Compatibility helper for any remaining legacy line-wide users.  The
+  // active L1D and ICache paths use nonce(epoch, paddr, wordCtr) above.
+  def legacyLineNonce(counter: UInt, paddr: UInt): UInt = {
+    val counterEff = zeroExtendTo(counter, 64) & "hffffffffffffff00".U(64.W)
     val paddrEff = zeroExtendTo(paddr, 64) & "hfffffffffffffff8".U(64.W)
-    Cat(ctrEff, paddrEff)
+    Cat(counterEff, paddrEff)
   }
 }
 /** BlackBox wrapper for the SystemVerilog module:
@@ -62,6 +71,8 @@ class asconaead64 extends BlackBox with HasBlackBoxResource {
   addResource("/asconaead64.sv")
   addResource("/asconp_boom.sv")
   addResource("./config.svh")
+
+  //addResource("/path/to/chipyard/generators/boom/src/main/resources/vsrc/asconaead64.sv")
 }
 
 class asconaead24 extends BlackBox with HasBlackBoxResource {
@@ -78,6 +89,8 @@ class asconaead24 extends BlackBox with HasBlackBoxResource {
   addResource("/asconaead24.sv")
   addResource("/asconp_boom.sv")
   addResource("./config.svh")
+
+  //addResource("/path/to/chipyard/generators/boom/src/main/resources/vsrc/asconaead64.sv")
 }
 
 // class cc_isa_encptr_req(implicit p: Parameters)extends BoomBundle with HasBoomUOP

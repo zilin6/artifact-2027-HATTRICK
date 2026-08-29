@@ -8,6 +8,13 @@ artifact onto an official Chipyard `1.13.0` workspace using
 Required checked-in Verilog resource files are included even when upstream
 `.gitignore` patterns ignore generic `*.v` files.
 
+The current snapshot includes the working-tree RTL edits from BOOM, Rocket Chip,
+inclusive-cache, and Chipyard. Their source directories are copied as plain
+files so reviewers do not need access to local-only submodule commits. The two
+SmallBoom artifact configuration files under
+`generators/chipyard/src/main/scala_artifact_smallboom` are retained because the
+artifact build mode selects that source directory explicitly.
+
 ## Included Source Trees
 
 | Path | Purpose |
@@ -33,6 +40,7 @@ The following are intentionally excluded from Git:
 - `simulator-*`, waveforms, logs, and run directories
 - Vivado and FireSim generated result directories
 - bitstream and driver bundles, which are release assets
+- inclusive-cache `test_run_dir/` output and IDE metadata
 
 
 The supported build flow relies on the target Chipyard workspace for unmodified

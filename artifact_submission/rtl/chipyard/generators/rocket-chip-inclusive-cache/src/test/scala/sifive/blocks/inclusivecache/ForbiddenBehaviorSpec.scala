@@ -8,7 +8,8 @@ import org.scalatest.matchers.should.Matchers
 import InclusiveCacheCounterTestUtils._
 
 class ForbiddenBehaviorSpec extends AnyFlatSpec with Matchers {
-  private val rtlDir = Paths.get("/path/to/chipyard/generators/rocket-chip-inclusive-cache/design/craft/inclusivecache/src")
+  private val rtlDir = Paths.get(
+    sys.props.getOrElse("inclusivecache.rtl.dir", "design/craft/inclusivecache/src"))
   private def allScalaFiles(root: Path): Seq[Path] =
     Files.walk(root).iterator().asScala.filter(p => Files.isRegularFile(p) && p.toString.endsWith(".scala")).toSeq
 

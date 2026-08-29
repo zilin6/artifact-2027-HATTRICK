@@ -184,15 +184,24 @@ class ICacheModule(outer: ICache) extends LazyModuleImp(outer)
   val debugWatchFetchLineBase = BigInt("80001700", 16).U(paddrBits.W)
   val debugWatchS1Line = (io.s1_paddr >> 6) === (debugWatchFetchLineBase >> 6)
   val debugWatchRefillLine = (refill_paddr >> 6) === (debugWatchFetchLineBase >> 6)
+  // Keep the original boot-window trace and also trace the first corrupted
+  // cycleprint instruction line.
   val debugFetchWindowLo = BigInt("80000240", 16).U(paddrBits.W)
   val debugFetchWindowHi = BigInt("800002c0", 16).U(paddrBits.W)
-  private def debugFetchWindow(addr: UInt): Bool = addr >= debugFetchWindowLo && addr < debugFetchWindowHi
+  // Frontend address encryption maps original 0x800013c0 to this physical line.
+  val debugFetchFaultLine = BigInt("0db9f02000", 16).U(paddrBits.W)
+  private def debugFetchWindow(addr: UInt): Bool =
+    (addr >= debugFetchWindowLo && addr < debugFetchWindowHi) ||
+      ((addr >> blockOffBits) === (debugFetchFaultLine >> blockOffBits))
 
   io.req.ready := !refill_one_beat
 
   val (_, _, d_done, refill_cnt) = edge_out.count(tl_out.d)
   val refill_done = refill_one_beat && d_done
   tl_out.d.ready := true.B
+  when (tl_out.d.valid) {
+    printf(p"[ICACHE-TL-D-ROUTE-DIAG] source=0x${Hexadecimal(tl_out.d.bits.source)} opcode=0x${Hexadecimal(tl_out.d.bits.opcode)} ready=${tl_out.d.ready} fire=${tl_out.d.fire} hasData=${edge_out.hasData(tl_out.d.bits)} size=${tl_out.d.bits.size} refill_valid=${refill_valid} refill_cnt=${refill_cnt} refill_done=${refill_done}\n")
+  }
   assertOnlyWatchdog(
     refillReqCryptoLine && refill_valid && !refill_done && !io.invalidate,
     4096,
@@ -560,6 +569,10 @@ class ICacheModule(outer: ICache) extends LazyModuleImp(outer)
   }
   when (icacheCryptoDebugLogEnable && refill_one_beat && debugFetchWindow(refill_paddr)) {
     _root_.chisel3.printf(p"[ICACHE-FETCH-REFILL-BEAT] cycle=${icacheDebugCycle} paddr=0x${Hexadecimal((refill_paddr >> blockOffBits) << blockOffBits)} beat=${refill_cnt} done=${refill_done.asUInt} meta_crypto=${refillMetaCryptoLine.asUInt} meta_counter=0x${Hexadecimal(refillMetaCounter)} data=0x${Hexadecimal(tl_out.d.bits.data)}\n")
+  }
+  // Periodic heartbeat captures ICache state when no request/refill event fires.
+  when (icacheCryptoDebugLogEnable && (icacheDebugCycle(7, 0) === 0.U)) {
+    _root_.chisel3.printf(p"[ICACHE-FETCH-HEARTBEAT] cycle=${icacheDebugCycle} s0=${s0_valid.asUInt} s1=${s1_valid.asUInt} s2=${s2_valid.asUInt} vaddr=0x${Hexadecimal(s2_vaddr)} paddr=0x${Hexadecimal(s2_paddr)} hit=${s2_hit.asUInt} miss=${s2_miss.asUInt} kill=${io.s2_kill.asUInt} inv=${io.invalidate.asUInt} req_v=${io.req.valid.asUInt} req_r=${io.req.ready.asUInt} resp_v=${io.resp.valid.asUInt} late_v=${io.s2_hit_late.valid.asUInt} late_r=${io.s2_hit_late.ready.asUInt} late_fire=${io.s2_hit_late.fire.asUInt} late_resp=${io.late_resp.valid.asUInt} refill=${refill_valid.asUInt} beat=${refill_one_beat.asUInt} done=${refill_done.asUInt} a_v=${tl_out.a.valid.asUInt} a_r=${tl_out.a.ready.asUInt} a_fire=${tl_out.a.fire.asUInt} d_v=${tl_out.d.valid.asUInt} d_r=${tl_out.d.ready.asUInt} frontend=${io.frontendEngineMode.asUInt} crypto_req=${cryptoEngine.io.req.valid.asUInt} crypto_resp=${cryptoEngine.io.resp.valid.asUInt}\n")
   }
 
 

@@ -36,6 +36,9 @@ class BoomWritebackUnit(implicit edge: TLEdgeOut, p: Parameters) extends L1Hella
     val data_resp = Input(new L1DataReadResp)
     /////////////////////////////////////////////
     val mem_grant = Input(Bool())
+    val evict_req = Decoupled(new BoomCacheEngineEvictReq)
+    val evict_in = Decoupled(new BoomCacheEngineEvictWord)
+    val evict_out = Flipped(Decoupled(new BoomCacheEngineEvictWord))
     val release = Decoupled(new TLBundleC(edge.bundle))
     val lsu_release = Decoupled(new TLBundleC(edge.bundle))
     
@@ -51,8 +54,17 @@ class BoomWritebackUnit(implicit edge: TLEdgeOut, p: Parameters) extends L1Hella
 
   ////////////////////////////////////////////////////////////
   val wbCounter = RegInit(0.U(cacheCryptoCounterBits.W))
+  val wbCounterState = Reg(new L1CryptoCounter)
+  // Preserve the original writeback timing: wb_resp means that the victim
+  // data is ready for the L1 MSHR to continue, not that the lower-level
+  // ReleaseAck has already returned.  Canonicalized writebacks produce this
+  // response after the last canonicalized word is ready, before C-channel
+  // ReleaseData is emitted.
+  val wbCanonicalize = RegInit(false.B)
+  val wbRespSent = RegInit(false.B)
+  val wb_buffer = Reg(Vec(refillCycles, UInt(encRowBits.W)))
   ////////////////////////////////////////////////////////////
-  val s_invalid :: s_fill_buffer :: s_lsu_release :: s_active :: s_grant :: Nil = Enum(5)
+  val s_invalid :: s_fill_buffer :: s_evict_req :: s_evict_words :: s_lsu_release :: s_active :: s_grant :: Nil = Enum(7)
   val state = RegInit(s_invalid)
   val r1_data_req_fired = RegInit(false.B)
   val r2_data_req_fired = RegInit(false.B)
@@ -60,8 +72,9 @@ class BoomWritebackUnit(implicit edge: TLEdgeOut, p: Parameters) extends L1Hella
   val r2_data_req_cnt = Reg(UInt(log2Up(refillCycles+1).W))
   val data_req_cnt = RegInit(0.U(log2Up(refillCycles+1).W))
   val (_, last_beat, all_beats_done, beat_count) = edge.count(io.release)
-  val wb_buffer = Reg(Vec(refillCycles, UInt(encRowBits.W)))
   val acked = RegInit(false.B)
+  val wbDebugCycle = RegInit(0.U(64.W))
+  wbDebugCycle := wbDebugCycle + 1.U
 
   io.idx.valid       := state =/= s_invalid
   io.idx.bits        := req.idx
@@ -75,6 +88,27 @@ class BoomWritebackUnit(implicit edge: TLEdgeOut, p: Parameters) extends L1Hella
   io.resp            := false.B
   io.lsu_release.valid := false.B
   io.lsu_release.bits := DontCare
+  io.evict_req.valid := false.B
+  io.evict_req.bits := 0.U.asTypeOf(new BoomCacheEngineEvictReq)
+  io.evict_in.valid := false.B
+  io.evict_in.bits := 0.U.asTypeOf(new BoomCacheEngineEvictWord)
+  io.evict_out.ready := false.B
+
+  when (io.log && state =/= s_invalid && wbDebugCycle(7, 0) === 0.U) {
+    printf("[L1D-WB-HEARTBEAT] cycle=%d state=%d idx=0x%x tag=0x%x voluntary=%d crypto=%d canonicalize=%d count=%d acked=%d req_v=%d req_r=%d evict_req_v=%d evict_req_r=%d evict_in_v=%d evict_in_r=%d evict_out_v=%d evict_out_r=%d lsu_rel_v=%d lsu_rel_r=%d rel_v=%d rel_r=%d grant=%d resp=%d\n",
+      wbDebugCycle, state, req.idx, req.tag, req.voluntary, req.cryptoLine,
+      wbCanonicalize, data_req_cnt, acked, io.req.valid, io.req.ready,
+      io.evict_req.valid, io.evict_req.ready, io.evict_in.valid, io.evict_in.ready,
+      io.evict_out.valid, io.evict_out.ready, io.lsu_release.valid, io.lsu_release.ready,
+      io.release.valid, io.release.ready, io.mem_grant, io.resp)
+  }
+  // Diagnostic for the voluntary writeback acknowledgement path.  Keep this
+  // purely observational: it records the pre-edge values that determine
+  // whether the ReleaseAck can advance s_grant.
+  when (io.log && (state === s_grant || io.mem_grant)) {
+    printf("[L1D-WB-ACK-DIAG] cycle=%d state=%d mem_grant=%d acked_before=%d expected_source=0x%x voluntary=%d canonicalize=%d\n",
+      wbDebugCycle, state, io.mem_grant, acked, cfg.nMSHRs.U, req.voluntary, wbCanonicalize)
+  }
 
   //////////////////////////////////////////////////////////////////////////////////////////
   // Printing Write-back buffer
@@ -113,6 +147,9 @@ class BoomWritebackUnit(implicit edge: TLEdgeOut, p: Parameters) extends L1Hella
       data_req_cnt := 0.U
       req := io.req.bits
       wbCounter := 0.U
+      wbCounterState := 0.U.asTypeOf(new L1CryptoCounter)
+      wbCanonicalize := false.B
+      wbRespSent := false.B
       acked := false.B
     }
   } .elsewhen (state === s_fill_buffer) {
@@ -139,11 +176,51 @@ class BoomWritebackUnit(implicit edge: TLEdgeOut, p: Parameters) extends L1Hella
       // wb_buffer(r2_data_req_cnt) := io.data_resp
       wb_buffer(r2_data_req_cnt) := io.data_resp.data
       // The writeback counter comes from the same victim-line read as the data beats.
-      wbCounter := io.data_resp.counter
+      wbCounter := io.data_resp.counter.epoch
+      wbCounterState := io.data_resp.counter
       when (r2_data_req_cnt === (refillCycles-1).U) {
-        io.resp := true.B
+        val needsCanonicalize = req.cryptoLine && io.data_resp.counter.wordCtr.map(_ =/= 0.U).reduce(_ || _)
+        wbCanonicalize := needsCanonicalize
+        io.resp := !needsCanonicalize
+        when (!needsCanonicalize) { wbRespSent := true.B }
+        state := Mux(needsCanonicalize, s_evict_req, s_lsu_release)
+        data_req_cnt := 0.U
+      }
+    }
+  } .elsewhen (state === s_evict_req) {
+    io.evict_req.valid := true.B
+    io.evict_req.bits.line.idx := req.idx
+    io.evict_req.bits.line.tag := req.tag
+    io.evict_req.bits.line.way_en := req.way_en
+    io.evict_req.bits.counter := wbCounterState
+    // The counter snapshot is captured on the final buffered read and remains
+    // stable in wbCounterState for the engine request.
+    when (io.evict_req.fire) {
+      when (io.log) { printf("[L1D-WB-EVICT-REQ] cycle=%d idx=0x%x tag=0x%x crypto=%d epoch=0x%x\n", wbDebugCycle, req.idx, req.tag, req.cryptoLine, wbCounterState.epoch) }
+      state := s_evict_words
+      data_req_cnt := 0.U
+    }
+  } .elsewhen (state === s_evict_words) {
+    io.evict_in.valid := data_req_cnt < refillCycles.U
+    io.evict_in.bits.chunk := data_req_cnt
+    io.evict_in.bits.data := wb_buffer(data_req_cnt)
+    io.evict_out.ready := true.B
+    when (io.evict_out.fire) {
+      when (io.log) { printf("[L1D-WB-EVICT-WORD] cycle=%d chunk=%d\n", wbDebugCycle, io.evict_out.bits.chunk) }
+      wb_buffer(io.evict_out.bits.chunk) := io.evict_out.bits.data
+      when (io.evict_out.bits.chunk === (refillCycles - 1).U) {
+        wbCounter := wbCounter + 1.U
+        // All canonicalized words are now resident in wb_buffer.  Return
+        // wb_resp before the legacy release path starts, matching the old
+        // writeback ordering while leaving the ReleaseAck wait in s_grant.
+        when (req.voluntary) {
+          io.resp := true.B
+          wbRespSent := true.B
+        }
         state := s_lsu_release
         data_req_cnt := 0.U
+      } .otherwise {
+        data_req_cnt := data_req_cnt + 1.U
       }
     }
   } .elsewhen (state === s_lsu_release) {
@@ -155,6 +232,7 @@ class BoomWritebackUnit(implicit edge: TLEdgeOut, p: Parameters) extends L1Hella
       u.cryptoLine := req.cryptoLine
     }
     when (io.lsu_release.fire) {
+     when (io.log) { printf("[L1D-WB-LSU-RELEASE] cycle=%d\n", wbDebugCycle) }
      state := s_active
     }
   } .elsewhen (state === s_active) {
@@ -169,16 +247,32 @@ class BoomWritebackUnit(implicit edge: TLEdgeOut, p: Parameters) extends L1Hella
       acked := true.B
     }
     when (io.release.fire) {
+      when (io.log) { printf("[L1D-WB-RELEASE-FIRE] cycle=%d beat=%d\n", wbDebugCycle, data_req_cnt) }
       data_req_cnt := data_req_cnt + 1.U
     }
-    when ((data_req_cnt === (refillCycles-1).U) && io.release.fire) {
+      when ((data_req_cnt === (refillCycles-1).U) && io.release.fire) {
+      // Probe writebacks do not receive a ReleaseAck and therefore never enter
+      // s_grant.  Complete their delayed writeback response with the final
+      // C-channel beat instead.
+      when (wbCanonicalize && !req.voluntary) {
+        io.resp := true.B
+        wbRespSent := true.B
+      }
       state := Mux(req.voluntary, s_grant, s_invalid)
     }
   } .elsewhen (state === s_grant) {
     when (io.mem_grant) {
+      when (io.log) { printf("[L1D-WB-MEM-GRANT] cycle=%d\n", wbDebugCycle) }
       acked := true.B
     }
     when (acked) {
+      when (wbCanonicalize && !wbRespSent) {
+        // Fallback for any canonicalized path that did not publish wb_resp
+        // at canonicalization completion.  Voluntary writebacks normally
+        // publish it in s_evict_words, before ReleaseData starts.
+        io.resp := true.B
+        wbRespSent := true.B
+      }
       state := s_invalid
     }
   }
@@ -445,7 +539,7 @@ class BoomDuplicatedDataArray(implicit p: Parameters) extends AbstractBoomDataAr
         size = nSets * refillCycles,
         data = Vec(rowWords, Bits(encDataBits.W))
       )
-      val counterArray = SyncReadMem(nSets, UInt(p(CacheCryptoCounterBitsKey).W))
+      val counterArray = SyncReadMem(nSets, new L1CryptoCounter)
       when (io.write.bits.way_en(w) && io.write.valid) {
         val data = VecInit((0 until rowWords) map (i => io.write.bits.data(encDataBits*(i+1)-1,encDataBits*i)))
         array.write(waddr, data, io.write.bits.wmask.asBools)
@@ -517,8 +611,8 @@ class BoomBankedDataArray(implicit p: Parameters) extends AbstractBoomDataArray 
   for (w <- 0 until nWays) {
     val s2_bank_reads = Reg(Vec(nBanks, Bits(encRowBits.W)))
     ////////////////////////////////////////////////////////////////////////////
-    val counterArrays = Seq.fill(memWidth)(SyncReadMem(nSets, UInt(p(CacheCryptoCounterBitsKey).W)))
-    val s2_counter_reads = Wire(Vec(memWidth, UInt(p(CacheCryptoCounterBitsKey).W)))
+    val counterArrays = Seq.fill(memWidth)(SyncReadMem(nSets, new L1CryptoCounter))
+    val s2_counter_reads = Wire(Vec(memWidth, new L1CryptoCounter))
     ////////////////////////////////////////////////////////////////////////////
     for (b <- 0 until nBanks) {
       val array = DescribedSRAM(
@@ -622,7 +716,17 @@ class BoomNonBlockingDCacheModule(outer: BoomNonBlockingDCache) extends LazyModu
     1))
   SynthesizedPlusArg(dcacheCryptoAssertEnableReader)
   val dcacheCryptoAssertEnable = dcacheCryptoAssertEnableReader.io.out =/= 0.U
-  private val dcacheCryptoDebugLogEnable = CacheCryptoDebugLog.runtimeEnable
+  // Keep the debug switch as an explicit synthesized plusarg reader.  The
+  // generic CacheCryptoDebugLog helper is not emitted by the CIRCT flow unless
+  // its reader is annotated, so previously +cache_crypto_debug_log=1 was
+  // silently optimized away from the Verilator model.
+  private val dcacheCryptoDebugLogReader = Module(new plusarg_reader(
+    "cache_crypto_debug_log=%d",
+    0,
+    "Enable BOOM cache-crypto debug logging",
+    1))
+  SynthesizedPlusArg(dcacheCryptoDebugLogReader)
+  private val dcacheCryptoDebugLogEnable = dcacheCryptoDebugLogReader.io.out =/= 0.U
   private val dcacheDebugCycle = RegInit(0.U(64.W))
   dcacheDebugCycle := dcacheDebugCycle + 1.U
   private val dcacheVerboseLogEnable = false.B
@@ -674,7 +778,7 @@ class BoomNonBlockingDCacheModule(outer: BoomNonBlockingDCache) extends LazyModu
   val wb = Module(new BoomWritebackUnit)
 
   /////////
-  wb.io.log := io.log
+  wb.io.log := io.log || dcacheCryptoDebugLogEnable
   /////////
 
   val prober = Module(new BoomProbeUnit)
@@ -697,7 +801,10 @@ class BoomNonBlockingDCacheModule(outer: BoomNonBlockingDCache) extends LazyModu
   mshrs.io.rob_head_idx := io.lsu.rob_head_idx
 
   ///////
-  mshrs.io.log := io.log
+  // Reuse the runtime crypto trace switch for replay/MSHR diagnostics. This
+  // keeps the trace enabled in standalone cache-crypto tests, where the
+  // external generic log input is normally low.
+  mshrs.io.log := io.log || dcacheCryptoDebugLogEnable
   ///////
 
   // tags
@@ -864,7 +971,7 @@ class BoomNonBlockingDCacheModule(outer: BoomNonBlockingDCache) extends LazyModu
       dcacheDebugCycle,
       engineDataRespChunk,
       engineDataWayEn,
-      engineDataLine.counter,
+      engineDataLine.counter.epoch,
       engineDataWord(xLen-1, 0))
   }
   when (engineDataReadFire) {
@@ -893,7 +1000,7 @@ class BoomNonBlockingDCacheModule(outer: BoomNonBlockingDCache) extends LazyModu
   engine.io.svc.data_write.ready := dataWriteArb.io.in(0).ready
   when (dataWriteArb.io.in(0).fire) {
     when (dcacheCryptoDebugLogEnable) {
-      printf("[L1D-CRYPTO-SVC-DATA-WRITE] cycle=%d idx=0x%x tag=0x%x way=0x%x chunk=%d row=0x%x word=%d counter=0x%x counter_wen=%d data=0x%x\n",
+      printf("[L1D-CRYPTO-SVC-DATA-WRITE] cycle=%d idx=0x%x tag=0x%x way=0x%x chunk=%d row=0x%x word=%d counter=0x%x ctrchunk=%d counter_wen=%d data=0x%x\n",
         dcacheDebugCycle,
         engine.io.svc.data_write.bits.line.idx,
         engine.io.svc.data_write.bits.line.tag,
@@ -901,7 +1008,8 @@ class BoomNonBlockingDCacheModule(outer: BoomNonBlockingDCache) extends LazyModu
         engine.io.svc.data_write.bits.chunk,
         engineDataWriteRowIdx,
         engineDataWriteWidx,
-        engine.io.svc.data_write.bits.counter,
+        engine.io.svc.data_write.bits.counter.epoch,
+        engine.io.svc.data_write.bits.counter.wordCtr(engine.io.svc.data_write.bits.chunk),
         engine.io.svc.data_write.bits.counter_wen,
         engine.io.svc.data_write.bits.data)
     }
@@ -1043,6 +1151,17 @@ class BoomNonBlockingDCacheModule(outer: BoomNonBlockingDCache) extends LazyModu
   // Does this request need to send a response or nack
   val s0_send_resp_or_nack = Mux(io.lsu.req.fire, s0_valid,
     VecInit(Mux(mshrs.io.replay.fire && isRead(mshrs.io.replay.bits.uop.mem_cmd), 1.U(memWidth.W), 0.U(memWidth.W)).asBools))
+  when (dcacheCryptoDebugLogEnable && io.lsu.req.fire) {
+    for (w <- 0 until memWidth) {
+      when (io.lsu.req.bits(w).valid) {
+        printf("[L1D-LSU-REQ-TRACE] cycle=%d lane=%d pc=0x%x cmd=0x%x addr=0x%x stq=%d stq_idx=%d data=0x%x req_crypto=%d\n",
+          dcacheDebugCycle, w.U, io.lsu.req.bits(w).bits.uop.debug_pc,
+          io.lsu.req.bits(w).bits.uop.mem_cmd, io.lsu.req.bits(w).bits.addr,
+          io.lsu.req.bits(w).bits.uop.uses_stq, io.lsu.req.bits(w).bits.uop.stq_idx,
+          io.lsu.req.bits(w).bits.data, reqCryptoForType(t_lsu, io.lsu.req.bits(w).bits))
+      }
+    }
+  }
   val replayIssuedS0 = mshrs.io.replay.fire
   val replayProtocolIssuedS0 = mshrs.io.replay.fire && mshrs.io.replay_uses_crypto_protocol
   when (mshrs.io.replay.fire) {
@@ -1582,6 +1701,41 @@ class BoomNonBlockingDCacheModule(outer: BoomNonBlockingDCache) extends LazyModu
     !s2_replay_killed &&
     s2_replay_any_candidate &&
     !s2_replay_engine_selected
+  when (dcacheCryptoDebugLogEnable &&
+        (replayProtocolIssuedS0 || replayProtocolIssuedS1 || replayProtocolIssuedS2 ||
+         mshrs.io.replay_done || mshrs.io.replay_retry ||
+         (s2_type === t_replay && s2_valid(0)))) {
+    printf("[L1D-REPLAY-TRACE] cycle=%d s0_fire=%d s1_issued=%d s2_issued=%d s2_valid=%d s2_type=%d addr=0x%x cmd=0x%x req_crypto=%d replay_crypto=%d meta_valid=%d hit=%d reenc_hit=%d reenc_victim=%d any_candidate=%d load_candidate=%d store_candidate=%d load_selected=%d store_selected=%d engine_load_ready=%d engine_store_ready=%d engine_reenc=%d s2_nack=%d s2_send_resp=%d s2_send_nack=%d done=%d retry=%d replay_valid=%d replay_ready=%d\n",
+      dcacheDebugCycle,
+      replayProtocolIssuedS0,
+      replayProtocolIssuedS1,
+      replayProtocolIssuedS2,
+      s2_valid(0),
+      s2_type,
+      s2_req(0).addr,
+      s2_req(0).uop.mem_cmd,
+      s2_replay_req_crypto_line,
+      s2_replay_uses_crypto_protocol,
+      s2_replay_meta_valid,
+      s2_hit(0),
+      s2_hit_reenc_active(0),
+      s2_nack_reenc_victim(0),
+      s2_replay_any_candidate,
+      s2_replay_load_candidate,
+      s2_replay_storelike_candidate,
+      s2_replay_load_selected,
+      s2_replay_store_selected,
+      engine.io.loadReady,
+      engine.io.storeReady,
+      engine.io.probeBlock.reenc.valid,
+      s2_nack(0),
+      s2_send_resp(0),
+      s2_send_nack(0),
+      mshrs.io.replay_done,
+      mshrs.io.replay_retry,
+      mshrs.io.replay.valid,
+      mshrs.io.replay.ready)
+  }
   when (mshrs.io.replay_done || mshrs.io.replay_retry) {
   }
 
@@ -1694,6 +1848,12 @@ class BoomNonBlockingDCacheModule(outer: BoomNonBlockingDCache) extends LazyModu
   mshrs.io.prober_state := prober.io.state
 
   // refills
+  when (dcacheCryptoDebugLogEnable && tl_out.d.valid) {
+    printf("[L1D-TL-D-TRACE] cycle=%d source=0x%x opcode=0x%x ready=%d fire=%d hasData=%d\n", dcacheDebugCycle, tl_out.d.bits.source, tl_out.d.bits.opcode, tl_out.d.ready, tl_out.d.fire, edge.hasData(tl_out.d.bits))
+  }
+  when (tl_out.d.valid && (tl_out.d.bits.source === 0.U || tl_out.d.bits.source === 1.U)) {
+    printf("[L1D-TL-D-ROUTE-DIAG] source=0x%x opcode=0x%x ready=%d fire=%d hasData=%d sink=0x%x\n", tl_out.d.bits.source, tl_out.d.bits.opcode, tl_out.d.ready, tl_out.d.fire, edge.hasData(tl_out.d.bits), tl_out.d.bits.sink)
+  }
   when (tl_out.d.bits.source === cfg.nMSHRs.U) {
     // This should be ReleaseAck
     tl_out.d.ready := true.B
@@ -1713,13 +1873,20 @@ class BoomNonBlockingDCacheModule(outer: BoomNonBlockingDCache) extends LazyModu
   metaWriteArb.io.in(1) <> mshrs.io.meta_write
 
   tl_out.e <> mshrs.io.mem_finish
+  when (dcacheCryptoDebugLogEnable && (tl_out.e.valid || tl_out.e.fire)) {
+    printf("[L1D-TL-E-TRACE] cycle=%d valid=%d ready=%d fire=%d sink=0x%x\n",
+      dcacheDebugCycle, tl_out.e.valid, tl_out.e.ready, tl_out.e.fire, tl_out.e.bits.sink)
+  }
 
   // writebacks
   val wbArb = Module(new Arbiter(new WritebackReq(edge.bundle), 2))
   // 0 goes to prober, 1 goes to MSHR evictions
   wbArb.io.in(0)       <> prober.io.wb_req
   wbArb.io.in(1)       <> mshrs.io.wb_req 
-  wb.io.req            <> wbArb.io.out   
+  wb.io.req            <> wbArb.io.out
+  engine.io.evictReq <> wb.io.evict_req
+  engine.io.evictIn <> wb.io.evict_in
+  wb.io.evict_out <> engine.io.evictOut
   //////////////////////////////////////////////////             
   // wb.io.data_resp       := s2_data_muxed(0)
   wb.io.data_resp.data  := s2_data_muxed(0)
@@ -1728,6 +1895,10 @@ class BoomNonBlockingDCacheModule(outer: BoomNonBlockingDCache) extends LazyModu
   //////////////////////////////////////////////////
   mshrs.io.wb_resp      := wb.io.resp
   wb.io.mem_grant       := tl_out.d.fire && tl_out.d.bits.source === cfg.nMSHRs.U
+  when (dcacheCryptoDebugLogEnable && tl_out.d.valid && tl_out.d.bits.opcode === TLMessages.ReleaseAck) {
+    printf("[L1D-WB-D-ACK-DIAG] cycle=%d d_source=0x%x expected_source=0x%x d_ready=%d d_fire=%d\n",
+      dcacheDebugCycle, tl_out.d.bits.source, cfg.nMSHRs.U, tl_out.d.ready, tl_out.d.fire)
+  }
 
   val lsu_release_arb = Module(new Arbiter(new TLBundleC(edge.bundle), 2))
   io.lsu.release <> lsu_release_arb.io.out
@@ -1735,6 +1906,12 @@ class BoomNonBlockingDCacheModule(outer: BoomNonBlockingDCache) extends LazyModu
   lsu_release_arb.io.in(1) <> prober.io.lsu_release
 
   TLArbiter.lowest(edge, tl_out.c, wb.io.release, prober.io.rep)
+  when (dcacheCryptoDebugLogEnable && (tl_out.c.valid || tl_out.c.fire || wb.io.release.fire)) {
+    printf("[L1D-TL-C-DIAG] cycle=%d out_v=%d out_r=%d out_fire=%d out_opcode=0x%x out_source=0x%x wb_v=%d wb_r=%d wb_fire=%d wb_opcode=0x%x wb_source=0x%x probe_v=%d probe_fire=%d\n",
+      dcacheDebugCycle, tl_out.c.valid, tl_out.c.ready, tl_out.c.fire, tl_out.c.bits.opcode,
+      tl_out.c.bits.source, wb.io.release.valid, wb.io.release.ready, wb.io.release.fire,
+      wb.io.release.bits.opcode, wb.io.release.bits.source, prober.io.rep.valid, prober.io.rep.fire)
+  }
 
   io.lsu.perf.release := edge.done(tl_out.c)
   io.lsu.perf.acquire := edge.done(tl_out.a)
@@ -1749,7 +1926,7 @@ class BoomNonBlockingDCacheModule(outer: BoomNonBlockingDCache) extends LazyModu
   val s2_data_word = Wire(Vec(memWidth, UInt()))
   
   ///////////////////////////////
-  val s2_counter = Wire(Vec(memWidth, UInt(p(CacheCryptoCounterBitsKey).W)))
+  val s2_counter = Wire(Vec(memWidth, new L1CryptoCounter))
   ///////////////////////////////
   val loadgen = (0 until memWidth).map { w =>
     new LoadGen(s2_req(w).uop.mem_size, s2_req(w).uop.mem_signed, s2_req(w).addr,
@@ -1873,6 +2050,25 @@ class BoomNonBlockingDCacheModule(outer: BoomNonBlockingDCache) extends LazyModu
                             !IsKilledByBranch(io.lsu.brupdate, s2_req(w).uop)
     io.lsu.nack(w).bits  := UpdateBrMask(io.lsu.brupdate, s2_req(w))
     assert(!(io.lsu.nack(w).valid && s2_type =/= t_lsu))
+    when (dcacheCryptoDebugLogEnable && io.lsu.resp(w).valid) {
+      printf("[L1D-LSU-RESP-TRACE] cycle=%d lane=%d pc=0x%x cmd=0x%x stq=%d stq_idx=%d data=0x%x s2_type=%d cache=%d engine=%d\n",
+        dcacheDebugCycle, w.U, io.lsu.resp(w).bits.uop.debug_pc,
+        io.lsu.resp(w).bits.uop.mem_cmd,
+        io.lsu.resp(w).bits.uop.uses_stq, io.lsu.resp(w).bits.uop.stq_idx,
+        io.lsu.resp(w).bits.data, s2_type, cache_resp(w).valid, engine_resp(w).valid)
+    }
+    when (dcacheCryptoDebugLogEnable && io.lsu.nack(w).valid) {
+      printf("[L1D-LSU-NACK-TRACE] cycle=%d lane=%d pc=0x%x cmd=0x%x addr=0x%x stq=%d stq_idx=%d s2_type=%d nack=%d miss=%d hit_block=%d victim=%d data=%d wb=%d reenc_victim=%d reenc_hit=%d engine=%d hit=%d tag_match=%d mshr_ready=%d mshr_secondary=%d wb_idx_match=%d repl_reenc=%d hit_reenc=%d replay=%d\n",
+        dcacheDebugCycle, w.U, io.lsu.nack(w).bits.uop.debug_pc,
+        io.lsu.nack(w).bits.uop.mem_cmd, io.lsu.nack(w).bits.addr,
+        io.lsu.nack(w).bits.uop.uses_stq, io.lsu.nack(w).bits.uop.stq_idx,
+        s2_type, s2_nack(w), s2_nack_miss(w), s2_nack_hit(w),
+        s2_nack_victim(w), s2_nack_data(w), s2_nack_wb(w),
+        s2_nack_reenc_victim(w), s2_nack_reenc_hit(w), s2_nack_engine(w),
+        s2_hit(w), s2_tag_match(w), mshrs.io.req(w).ready,
+        mshrs.io.secondary_miss(w), s2_wb_idx_matches(w),
+        s2_repl_meta(w).reenc_active, s2_hit_reenc_active(w), s2_type === t_replay)
+    }
   }
 
   // Store/amo hits
@@ -1893,7 +2089,7 @@ class BoomNonBlockingDCacheModule(outer: BoomNonBlockingDCache) extends LazyModu
   assert(!(RegNext(s2_crypto_store_req) && s3_valid),
     "crypto store request must not enter the plain s3 store pipeline")
 
-  val s3_counter = Reg(UInt(p(CacheCryptoCounterBitsKey).W))
+  val s3_counter = Reg(new L1CryptoCounter)
   ////////////////////////////////////////////////////////////////////////
   for (w <- 1 until memWidth) {
     assert(!(s2_valid(w) && s2_hit(w) && isWrite(s2_req(w).uop.mem_cmd) &&
@@ -1930,7 +2126,7 @@ class BoomNonBlockingDCacheModule(outer: BoomNonBlockingDCache) extends LazyModu
     //////////////////////////////////////////////////////////////////
     when (dcacheCryptoDebugLogEnable && s2_valid(w) && s2_effective_req_crypto(w) &&
           (s2_lr || s2_sc || s2_crypto_engine_req(w) || s2_nack(w) || s2_send_resp(w))) {
-      printf("[L1D-CRYPTO-S2] cycle=%d lane=%d pc=0x%x cmd=0x%x addr=0x%x type=%d hit=%d tag_match=%d force_replace=%d req_crypto=%d meta_crypto=%d reenc_hit=%d nack=%d nack_no_engine=%d nack_engine=%d send_resp=%d send_nack=%d lr=%d sc=%d sc_fail=%d lrsc_valid=%d lrsc_match=%d lrsc_count=%d lrsc_addr=0x%x reservation_selected=%d load_sel=%d store_sel=%d replay_load_sel=%d replay_store_sel=%d engine_req=%d counter=0x%x data=0x%x\n",
+      printf("[L1D-CRYPTO-S2] cycle=%d lane=%d pc=0x%x cmd=0x%x addr=0x%x type=%d hit=%d tag_match=%d force_replace=%d req_crypto=%d meta_crypto=%d reenc_hit=%d nack=%d nack_no_engine=%d nack_engine=%d send_resp=%d send_nack=%d lr=%d sc=%d sc_fail=%d lrsc_valid=%d lrsc_match=%d lrsc_count=%d lrsc_addr=0x%x reservation_selected=%d load_sel=%d store_sel=%d replay_load_sel=%d replay_store_sel=%d engine_req=%d counter=0x%x ctrchunk=%d data=0x%x reqdata=0x%x\n",
         dcacheDebugCycle,
         w.U,
         s2_req(w).uop.debug_pc,
@@ -1961,8 +2157,31 @@ class BoomNonBlockingDCacheModule(outer: BoomNonBlockingDCache) extends LazyModu
         s2_replay_load_selected && (w == 0).B,
         s2_replay_store_selected && (w == 0).B,
         s2_crypto_engine_req(w),
-        s2_counter(w),
-        s2_data_word(w))
+        s2_counter(w).epoch,
+        s2_counter(w).wordCtr(s2_req(w).addr(log2Ceil(cacheBlockBytes)-1, wordOffBits)),
+        s2_data_word(w),
+        s2_req(w).data)
+    }
+    // Bounded probe for near-rollover crypto requests.
+    // This is intentionally independent of the broad debug plusarg so the
+    // transaction history is available even when plusarg annotations are
+    // stripped by a simulator flow.
+    when (s2_valid(w) && s2_effective_req_crypto(w) &&
+          s2_counter(w).wordCtr(s2_req(w).addr(log2Ceil(cacheBlockBytes)-1, wordOffBits)) >= "hfc".U) {
+      printf("[L1D-TARGET-BOUNDARY] cycle=%d lane=%d addr=0x%x cmd=0x%x hit=%d tag_match=%d force_replace=%d reenc_active=%d nack=%d engine_req=%d epoch=0x%x wordCtr=0x%x data=0x%x reqdata=0x%x\n",
+        dcacheDebugCycle, w.U, s2_req(w).addr, s2_req(w).uop.mem_cmd,
+        s2_hit(w), s2_tag_match(w), s2_force_mode_replace(w),
+        s2_hit_reenc_active(w), s2_nack(w), s2_crypto_engine_req(w),
+        s2_counter(w).epoch,
+        s2_counter(w).wordCtr(s2_req(w).addr(log2Ceil(cacheBlockBytes)-1, wordOffBits)),
+        s2_data_word(w), s2_req(w).data)
+    }
+    when (s2_valid(w) && dcacheDebugCycle(9, 0) === 0.U) {
+      printf("[L1D-PERIODIC] cycle=%d addr=0x%x cmd=0x%x reqCrypto=%d metaCrypto=%d hit=%d epoch=0x%x ctr=0x%x\n",
+        dcacheDebugCycle, s2_req(w).addr, s2_req(w).uop.mem_cmd,
+        s2_effective_req_crypto(w), s2_effective_hit_meta(w).cryptoLine,
+        s2_hit(w), s2_counter(w).epoch,
+        s2_counter(w).wordCtr(s2_req(w).addr(log2Ceil(cacheBlockBytes)-1, wordOffBits)))
     }
   }
   //////////////////////////////////////////////////////
@@ -2016,7 +2235,7 @@ class BoomNonBlockingDCacheModule(outer: BoomNonBlockingDCache) extends LazyModu
   engine.io.hitReq.bits := s2_engine_req
   engine.io.hitReqIsStore := Mux(s2_replay_fresh_selected, s2_replay_storelike_candidate, s2_lsu_store_selected)
   when (dcacheCryptoDebugLogEnable && engine.io.hitReq.valid) {
-    printf("[L1D-CRYPTO-ENGINE-HITREQ] cycle=%d pc=0x%x cmd=0x%x addr=0x%x lane=%d is_store=%d replay=%d store_sel=%d load_any=%d meta_crypto=%d meta_reenc=%d way=0x%x counter=0x%x cipher=0x%x send_resp=%d\n",
+    printf("[L1D-CRYPTO-ENGINE-HITREQ] cycle=%d pc=0x%x cmd=0x%x addr=0x%x lane=%d is_store=%d replay=%d store_sel=%d load_any=%d meta_crypto=%d meta_reenc=%d way=0x%x counter=0x%x cipher=0x%x reqdata=0x%x send_resp=%d\n",
       dcacheDebugCycle,
       engine.io.hitReq.bits.req.uop.debug_pc,
       engine.io.hitReq.bits.req.uop.mem_cmd,
@@ -2029,8 +2248,9 @@ class BoomNonBlockingDCacheModule(outer: BoomNonBlockingDCache) extends LazyModu
       engine.io.hitReq.bits.meta.cryptoLine,
       engine.io.hitReq.bits.meta.reenc_active,
       engine.io.hitReq.bits.line.way_en,
-      engine.io.hitReq.bits.counter,
+      engine.io.hitReq.bits.counter.epoch,
       engine.io.hitReq.bits.cipherWord,
+      engine.io.hitReq.bits.req.data,
       engine.io.hitReq.bits.sendResp)
   }
   when (engine.io.hitReq.valid) {
@@ -2072,6 +2292,18 @@ class BoomNonBlockingDCacheModule(outer: BoomNonBlockingDCache) extends LazyModu
   ///////////////////////////////////////////////////////////
   dataWriteArb.io.in(1).bits.way_en := s3_way
   when (dataWriteArb.io.in(1).fire) {
+    when (dcacheCryptoDebugLogEnable) {
+      printf("[L1D-PLAIN-STORE-WRITE] cycle=%d s3_valid=%d s3_addr=0x%x s2_addr=0x%x s2_type=%d s2_valid=%d addr=0x%x data=0x%x way=0x%x\n",
+        dcacheDebugCycle,
+        s3_valid,
+        s3_req.addr,
+        s2_req(0).addr,
+        s2_type,
+        s2_valid(0),
+        dataWriteArb.io.in(1).bits.addr,
+        dataWriteArb.io.in(1).bits.data,
+        dataWriteArb.io.in(1).bits.way_en)
+    }
   }
 
 

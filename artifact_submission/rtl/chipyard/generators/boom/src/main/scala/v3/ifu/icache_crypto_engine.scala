@@ -28,7 +28,8 @@ class BoomICacheCryptoEngine(implicit p: Parameters) extends BoomModule()(p)
   with HasBoomFrontendParameters
 {
   private val wordBits = fetchBytes * 8
-  private val debugWatchPaddrLine = BigInt("80402940", 16).U(paddrBits.W)
+  // Focus the trace on the first corrupted cycleprint instruction line.
+  private val debugWatchPaddrLine = BigInt("0db9f02000", 16).U(paddrBits.W)
   require(wordBits == 64, "Ascon icache crypto path currently expects 64b fetch data")
 
   val io = IO(new Bundle {
@@ -39,7 +40,10 @@ class BoomICacheCryptoEngine(implicit p: Parameters) extends BoomModule()(p)
   })
 
   val decryptor = Module(new asconaead64())
-  val decryptNonce = AsconCryptoParams.nonce(io.req.bits.counter, io.req.bits.paddr)
+  // Any encrypted line visible below L1 has been canonicalized by DCache
+  // writeback, so its per-word counter is zero and the scalar refill counter
+  // is the full epoch.
+  val decryptNonce = AsconCryptoParams.nonce(io.req.bits.counter, io.req.bits.paddr, 0.U(8.W))
   private def dbgWatchReq: Bool =
     io.req.bits.cryptoLine &&
     (io.req.bits.paddr & ~((fetchBytes - 1).U(paddrBits.W))) === debugWatchPaddrLine

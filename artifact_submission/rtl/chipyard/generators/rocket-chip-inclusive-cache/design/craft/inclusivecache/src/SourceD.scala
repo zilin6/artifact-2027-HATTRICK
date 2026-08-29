@@ -478,6 +478,9 @@ class SourceD(params: InclusiveCacheParameters) extends Module
   d.bits.denied  := s3_req.bad
   d.bits.data    := s3_rdata
   d.bits.corrupt := s3_req.bad && d.bits.opcode(0)
+  when (debugLogEnable && d.valid) {
+    printf(p"[SOURCED-TRACE] source=0x${Hexadecimal(d.bits.source)} sink=0x${Hexadecimal(d.bits.sink)} opcode=0x${Hexadecimal(d.bits.opcode)} req_opcode=0x${Hexadecimal(s3_req.opcode)} req_source=0x${Hexadecimal(s3_req.source)} req_sink=0x${Hexadecimal(s3_req.sink)} set=0x${Hexadecimal(s3_req.set)} tag=0x${Hexadecimal(s3_req.tag)} last=${s3_last} ready=${d.ready} fire=${d.fire} crypto=${s3_req.cryptoLine}\n")
+  }
   d.bits.user.lift(CacheCryptoRefillMeta).foreach { u =>
     u.counter := Mux(s3_req.cryptoLine, s3_counter_for_resp, 0.U)
     u.cryptoLine := s3_req.cryptoLine
@@ -755,6 +758,12 @@ class SourceD(params: InclusiveCacheParameters) extends Module
     (!s2_full || io.grant_req.way =/= s2_req.way     || io.grant_req.set =/= s2_req.set) &&
     (!s3_full || io.grant_req.way =/= s3_req.way     || io.grant_req.set =/= s3_req.set) &&
     (!s4_full || io.grant_req.way =/= s4_req.way     || io.grant_req.set =/= s4_req.set)
+
+  when (debugLogEnable && (io.req.valid || busy || s2_full || s3_full || s4_full) &&
+        (s1_req.source === "h22".U || s1_req_reg.source === "h22".U ||
+         s2_req.source === "h22".U || s3_req.source === "h22".U || s4_req.source === "h22".U)) {
+    printf(p"[SOURCED-REL-STATE] req_v=${io.req.valid} req_r=${io.req.ready} req_fire=${io.req.fire} busy=${busy} s1_valid=${s1_valid} s1_need_pb=${s1_need_pb} s1_first=${s1_first} s1_last=${s1_last} s1_beat=${s1_beat} s2_full=${s2_full} s2_valid=${s2_valid} s2_valid_pb=${s2_valid_pb} pb_v=${io.pb_pop.valid} pb_r=${io.pb_pop.ready} pb_fire=${io.pb_pop.fire} rel_v=${io.rel_pop.valid} rel_r=${io.rel_pop.ready} rel_fire=${io.rel_pop.fire} s3_full=${s3_full} s3_valid=${s3_valid} s3_valid_d=${s3_valid_d} d_v=${d.valid} d_r=${d.ready} d_fire=${d.fire} s4_full=${s4_full} bs_w_v=${io.bs_wadr.valid} bs_w_r=${io.bs_wadr.ready} bs_w_fire=${io.bs_wadr.fire}\n")
+  }
 
   // SourceD cannot overlap with SinkC b/c the only way inner caches could become
   // dirty such that they want to put data in via SinkC is if we Granted them permissions,

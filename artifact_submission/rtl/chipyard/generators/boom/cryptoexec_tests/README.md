@@ -39,21 +39,21 @@ Example: run `rv64mi-ce-icache-crypto-jump`.
 1. Load the Chipyard environment:
 
 ```bash
-cd "$CHIPYARD_ROOT"
+cd /path/to/chipyard
 source ./env.sh
 ```
 
 2. Build the test binary:
 
 ```bash
-make -C "$CHIPYARD_ROOT/generators/boom/cryptoexec_tests" -j1 \
+make -C /path/to/chipyard/generators/boom/cryptoexec_tests -j1 \
   rv64mi-ce-icache-crypto-jump
 ```
 
 3. Rebuild the Verilator simulator only if RTL changed since the last build:
 
 ```bash
-cd "$CHIPYARD_ROOT/sims/verilator"
+cd /path/to/chipyard/sims/verilator
 make CONFIG=SmallBoomV3Config -j2
 ```
 
@@ -62,11 +62,11 @@ If the RTL did not change, skip this step.
 4. Run the test in fast mode:
 
 ```bash
-cd "$CHIPYARD_ROOT/sims/verilator"
+cd /path/to/chipyard/sims/verilator
 RUN_TS=$(date +%F_%H-%M-%S)
-LD_LIBRARY_PATH="$CHIPYARD_ROOT/tools/DRAMSim2:$CHIPYARD_ROOT/sims/verilator:$LD_LIBRARY_PATH" \
+LD_LIBRARY_PATH=/path/to/chipyard/tools/DRAMSim2:/path/to/chipyard/sims/verilator:$LD_LIBRARY_PATH \
 make CONFIG=SmallBoomV3Config -j2 \
-  BINARY="$CHIPYARD_ROOT/generators/boom/cryptoexec_tests/rv64mi-ce-icache-crypto-jump" \
+  BINARY=/path/to/chipyard/generators/boom/cryptoexec_tests/rv64mi-ce-icache-crypto-jump \
   LOADMEM=1 \
   TIMEOUT_CYCLES=1000000 \
   EXTRA_SIM_OUT_NAME=${RUN_TS} \

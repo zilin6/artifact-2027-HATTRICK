@@ -230,6 +230,13 @@ class SinkC(params: InclusiveCacheParameters) extends Module
     c.ready := Mux(raw_resp,
       rawDataReady && rawCounterReady,
       !req_block && !buf_block && !set_block)
+    // Keep a complete trace for the incoming L1 ReleaseData transaction.  The
+    // previous source filter only covered small local IDs, while the L1 source
+    // in this configuration is 0x22.  This is diagnostic-only.
+    when (debugLogEnable && c.valid && !raw_resp &&
+          (c.bits.source === "h22".U || cCryptoLine || set === 0.U)) {
+      printf(p"[SINKC-REL-TRACE] source=0x${Hexadecimal(c.bits.source)} opcode=0x${Hexadecimal(c.bits.opcode)} addr=0x${Hexadecimal(c.bits.address)} set=0x${Hexadecimal(set)} tag=0x${Hexadecimal(tag)} first=${first} last=${last} beat=${beat} hasData=${hasData} crypto=${cCryptoLine} counter=0x${Hexadecimal(cCounter)} c_ready=${c.ready} c_fire=${c.fire} req_v=${io.req.valid} req_r=${io.req.ready} req_fire=${io.req.fire} push_v=${putbuffer.io.push.valid} push_r=${putbuffer.io.push.ready} push_fire=${putbuffer.io.push.fire} free=${free} set_block=${set_block} buf_block=${buf_block} resp=${resp}\n")
+    }
 
     // 只有 ProbeAckData 的首拍才在 SinkC 这里直接把 counter 送进 committed
     // sidecar；ReleaseData 的 latest counter 跟随每个 payload beat 一起进入 putbuffer。
@@ -277,6 +284,9 @@ class SinkC(params: InclusiveCacheParameters) extends Module
     io.req.bits.tag    := tag
     io.req.bits.put    := put
     io.req.bits.cryptoLine := cCryptoLine
+    when (debugLogEnable && io.req.fire && cCryptoLine) {
+      printf(p"[SINKC-REQ-FIRE] source=0x${Hexadecimal(c.bits.source)} opcode=0x${Hexadecimal(c.bits.opcode)} set=0x${Hexadecimal(set)} tag=0x${Hexadecimal(tag)} put=0x${Hexadecimal(put)}\n")
+    }
 
     when (!resp && c.fire && first && hasData && cCryptoLine) {
       chisel3.printf("[SINKC-CTR-SET] source=%d set=0x%x put=0x%x relIdx=0x%x first=%d last=%d opcode=0x%x size=%d counter=0x%x\n",

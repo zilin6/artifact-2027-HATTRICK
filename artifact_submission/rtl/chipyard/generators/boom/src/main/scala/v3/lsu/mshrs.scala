@@ -108,8 +108,6 @@ class BoomMSHR(implicit edge: TLEdgeOut, p: Parameters) extends BoomModule()(p)
 
     val probe_rdy   = Output(Bool())
   })
-  private def printf(args: Any*): Unit = {}
-
   // TODO: Optimize this. We don't want to mess with cache during speculation
   // s_refill_req      : Make a request for a new cache line
   // s_refill_resp     : Store the refill response into our buffer
@@ -220,6 +218,13 @@ class BoomMSHR(implicit edge: TLEdgeOut, p: Parameters) extends BoomModule()(p)
   io.mem_grant.ready     := false.B
 
   val state_prev = RegNext(state, s_invalid)
+
+  // Observational trace for the L1 MSHR owning TL source 1 in the
+  // re-encryption-boundary reproducer.
+  when (state =/= state_prev || io.mem_grant.fire || io.mem_finish.fire ||
+      grantack.valid =/= RegNext(grantack.valid, false.B)) {
+    printf(p"[L1D-MSHR-E-DIAG] id=${io.id} state=${state} prev=${state_prev} grantack_v=${grantack.valid} grantack_sink=0x${Hexadecimal(grantack.bits.sink)} mem_grant_v=${io.mem_grant.valid} mem_grant_r=${io.mem_grant.ready} mem_grant_fire=${io.mem_grant.fire} d_opcode=0x${Hexadecimal(io.mem_grant.bits.opcode)} d_source=0x${Hexadecimal(io.mem_grant.bits.source)} d_sink=0x${Hexadecimal(io.mem_grant.bits.sink)} refill_done=${refill_done} mem_finish_v=${io.mem_finish.valid} mem_finish_r=${io.mem_finish.ready} mem_finish_fire=${io.mem_finish.fire}\n")
+  }
 
   when (io.req_sec_val && io.req_sec_rdy) {
     req.uop.mem_cmd := dirtier_cmd
@@ -438,7 +443,8 @@ class BoomMSHR(implicit edge: TLEdgeOut, p: Parameters) extends BoomModule()(p)
     io.refill.bits.way_en := req.way_en
     io.refill.bits.wmask  := ~(0.U(rowWords.W))
     io.refill.bits.data   := io.lb_resp
-    io.refill.bits.counter := refill_counter
+    io.refill.bits.counter.epoch := refill_counter
+    io.refill.bits.counter.wordCtr.foreach(_ := 0.U)
     io.refill.bits.counter_wen := refill_ctr === (cacheDataBeats - 1).U
     when (io.refill.fire) {
       refill_ctr := refill_ctr + 1.U
@@ -691,8 +697,7 @@ class BoomMSHRFile(implicit edge: TLEdgeOut, p: Parameters) extends BoomModule()
   io.prefetch <> prefetcher.io.prefetch
 
   //////////////////////////////////////////////////////////////////////
-  when (io.log)
-  {  
+  when (io.log) {
     printf ("Prefetcher: Address:0x%x Data:0x%x \n", io.prefetch.bits.addr, io.prefetch.bits.data)
   }
   ///////////////////////////////////////////////////////////////////////
@@ -848,6 +853,9 @@ class BoomMSHRFile(implicit edge: TLEdgeOut, p: Parameters) extends BoomModule()
     when (io.mem_grant.bits.source === i.U) {
       mshr.io.mem_grant <> io.mem_grant
     }
+    when (mshr.io.mem_grant.valid) {
+      printf(p"[L1D-MEMGRANT-ROUTE] id=${i} source=0x${Hexadecimal(mshr.io.mem_grant.bits.source)} sink=0x${Hexadecimal(mshr.io.mem_grant.bits.sink)} opcode=0x${Hexadecimal(mshr.io.mem_grant.bits.opcode)} ready=${mshr.io.mem_grant.ready} fire=${mshr.io.mem_grant.fire}\n")
+    }
 
     sec_rdy   = sec_rdy || (mshr.io.req_sec_rdy && mshr.io.req_sec_val)
     resp_arb.io.in(i) <> mshr.io.resp
@@ -982,6 +990,27 @@ class BoomMSHRFile(implicit edge: TLEdgeOut, p: Parameters) extends BoomModule()
   }
   when (io.replay_retry) {
     assert(replay_outstanding_valid, "replay_retry should only be returned for a crypto-protocol replay")
+  }
+
+  when (io.log && (io.replay.valid || io.replay.fire || io.replay_done || io.replay_retry || replay_outstanding_valid)) {
+    printf("[L1D-MSHR-REPLAY-TRACE] cycle=%d replay_valid=%d replay_ready=%d replay_fire=%d protocol_done=%d replay_cmd=0x%x replay_addr=0x%x replay_crypto=%d replay_uses_crypto=%d outstanding=%d done=%d retry=%d src_valid=%d src_crypto=%d src_cmd=0x%x src_addr=0x%x sdq_val=0x%x\n",
+      io.debug_sc_fail_diag_cycle,
+      io.replay.valid,
+      io.replay.ready,
+      replay_fire,
+      replay_protocol_done,
+      io.replay.bits.uop.mem_cmd,
+      io.replay.bits.addr,
+      io.replay.bits.req_crypto_line,
+      io.replay_uses_crypto_protocol,
+      replay_outstanding_valid,
+      io.replay_done,
+      io.replay_retry,
+      replay_src_valid,
+      replay_src_uses_crypto_protocol,
+      replay_src_cmd,
+      replay_src_bits.addr,
+      sdq_val)
   }
 
   when (io.debug_sc_fail_diag) {

@@ -1,4 +1,8 @@
 component	source	note
 chipyard-base	69eba860a352343e4ac6b6df0f3638a79a86ec78	Official Chipyard release tag 1.13.0 used as the reproducible base workspace
+boom-source	36cddeb976fac077e47d932e680d9314f88f31fb+working-tree	BOOM V3 source snapshot including the current local cache/address-crypto changes; local edits are stored as files, not as a fetchable submodule commit
+rocket-chip-source	08f6b306ce2c8997f4845ee448580f62b7113b70+working-tree	Rocket Chip source snapshot including the current L1 crypto counter changes
+inclusive-cache-source	3b360314311dfdb704cca83fd8599bc26e7ae3f8+working-tree	Inclusive-cache source snapshot including the current counter-path and diagnostic changes
+chipyard-source	b2c7d7f36fbf8f9ace484d3359489a8c82f5c54a+working-tree	Chipyard configuration and peripheral source snapshot used by the current RTL workspace
 artifact-rtl-sources	artifact repository: artifact_submission/rtl/chipyard	Submitted RTL sources copied into the artifact; no local-only submodule commit is required to fetch them
 artifact-restore-script	artifact_submission/rtl/prepare_chipyard_workspace.sh	Replaces artifact-owned generator subtrees on top of the official Chipyard base and preserves unmodified base generator subtrees

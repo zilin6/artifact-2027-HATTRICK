@@ -70,7 +70,7 @@ lazy val micrositeSettings = Seq(
   ghpagesNoJekyll := false,
   ghpagesRepository := file("build/gh-pages"),
   ghpagesBranch := "gh-pages",
-  git.remoteRepo := "https://github.com/chipsalliance/chisel.git",
+  git.remoteRepo := "git@github.com:chipsalliance/chisel.git",
   includeFilter in makeSite := "*.html" | "*.css" | "*.png" | "*.jpg" | "*.gif" | "*.js" | "*.swf" | "*.yml" | "*.md" |
     "*.svg" | "*.woff" | "*.ttf",
   includeFilter in Jekyll := (includeFilter in makeSite).value,

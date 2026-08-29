@@ -410,6 +410,83 @@ vm_probe_range_last_return:
 
     li a0, 0x15
     jal ra, vm_stage_emit_asm
+
+    li t0, MSTATUS_MPP
+    csrc mstatus, t0
+    li t0, MSTATUS_MPRV_MPP_U
+    csrs mstatus, t0
+
+    li t0, 0
+    WRITE_CONTROL_DCACHE t0
+    fence rw, rw
+    .word 0x11400013
+
+    LA_ABS t0, __crypto_runtime_start
+    li t1, VM_VIRT_OFFSET
+    add t0, t0, t1
+    LA_ABS t2, __crypto_runtime_end
+    add t2, t2, t1
+    li t5, -64
+    and t0, t0, t5
+    and t2, t2, t5
+    addi t4, t0, 64
+    beq t0, t2, 5f
+4:
+    ld a0,  0(t0)
+    ld a1,  8(t0)
+    ld a2, 16(t0)
+    ld a3, 24(t0)
+    ld a4, 32(t0)
+    ld a5, 40(t0)
+    ld a6, 48(t0)
+    ld a7, 56(t0)
+    sd a0,  0(t0)
+    sd a1,  8(t0)
+    sd a2, 16(t0)
+    sd a3, 24(t0)
+    sd a4, 32(t0)
+    sd a5, 40(t0)
+    sd a6, 48(t0)
+    sd a7, 56(t0)
+    addi t0, t0, 64
+    bne t0, t4, 8f
+    mv s1, t0
+    mv s2, t2
+    li t6, 0
+    WRITE_CONTROL_DCACHE t6
+    li t6, MSTATUS_MPRV
+    csrc mstatus, t6
+    fence rw, rw
+    li a0, 0x151
+    jal ra, vm_stage_emit_asm
+    li t6, MSTATUS_MPRV_MPP_U
+    csrs mstatus, t6
+    li t6, 0
+    WRITE_CONTROL_DCACHE t6
+    fence rw, rw
+    mv t0, s1
+    mv t2, s2
+8:
+    bne t0, t2, 4b
+    mv s1, t0
+    mv s2, t2
+    li t6, 0
+    WRITE_CONTROL_DCACHE t6
+    li t6, MSTATUS_MPRV
+    csrc mstatus, t6
+    fence rw, rw
+    li a0, 0x152
+    jal ra, vm_stage_emit_asm
+    li a0, 0x153
+    jal ra, vm_stage_emit_asm
+5:
+    fence rw, rw
+    li t6, 0
+    WRITE_CONTROL_DCACHE t6
+    li t6, MSTATUS_MPRV
+    csrc mstatus, t6
+    fence rw, rw
+
     li a0, 0x16
     jal ra, vm_stage_emit_asm
     .word 0x11500013

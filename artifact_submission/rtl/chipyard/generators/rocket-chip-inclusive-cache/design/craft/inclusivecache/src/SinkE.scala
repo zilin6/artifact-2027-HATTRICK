@@ -20,6 +20,7 @@ package sifive.blocks.inclusivecache
 import chisel3._
 import chisel3.util._
 import freechips.rocketchip.tilelink._
+import freechips.rocketchip.util.PlusArg
 
 class SinkEResponse(params: InclusiveCacheParameters) extends InclusiveCacheBundle(params)
 {
@@ -32,6 +33,7 @@ class SinkE(params: InclusiveCacheParameters) extends Module
     val resp = Valid(new SinkEResponse(params))
     val e = Flipped(Decoupled(new TLBundleE(params.inner.bundle)))
   })
+  val debugLogEnable = PlusArg("inclusive_cache_debug_log", default = 0, width = 1) =/= 0.U
 
   if (params.firstLevel) {
     // Tie off unused ports
@@ -45,5 +47,8 @@ class SinkE(params: InclusiveCacheParameters) extends Module
     e.ready := true.B
     io.resp.valid := e.valid
     io.resp.bits.sink := e.bits.sink
+    when (debugLogEnable && e.valid) {
+      printf(p"[SINKE-TRACE] sink=0x${Hexadecimal(e.bits.sink)} ready=${e.ready} fire=${e.fire}\n")
+    }
   }
 }

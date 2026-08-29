@@ -1,6 +1,7 @@
 package chipyard
 import chipyard.peripherals.mydma._
 import chipyard.peripherals.mydisk._
+import chipyard.peripherals.iommu._
 import org.chipsalliance.cde.config.{Config}
 
 // ---------------------
@@ -24,7 +25,13 @@ class WithMyDisk extends Config((site, here, up) => {
   ))
 })
 
+class WithSimpleIOMMU extends Config((site, here, up) => {
+  case SimpleIOMMUKey => Some(SimpleIOMMUParams())
+})
+
 class SmallBoomV3Config extends Config(
+  new chipyard.WithMyDMA ++
+  new chipyard.WithSimpleIOMMU ++
   new boom.v3.common.WithBoomCommitLogPrintf ++
   new chipyard.config.WithCacheCrypto(enable = true) ++
   new freechips.rocketchip.subsystem.WithExtMemSbusBypass ++

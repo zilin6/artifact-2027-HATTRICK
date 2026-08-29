@@ -42,6 +42,7 @@ class InclusiveCacheBankScheduler(params: InclusiveCacheParameters) extends Modu
   })
 
   val sourceA = Module(new SourceA(params))
+  val debugLogEnable = PlusArg("inclusive_cache_debug_log", default = 0, width = 1) =/= 0.U
   val sourceB = Module(new SourceB(params))
   val sourceC = Module(new SourceC(params))
   val sourceD = Module(new SourceD(params))
@@ -108,6 +109,9 @@ class InclusiveCacheBankScheduler(params: InclusiveCacheParameters) extends Modu
     m.io.sinkc.valid := sinkC.io.resp.valid && sinkC.io.resp.bits.set === m.io.status.bits.set
     m.io.sinkd.valid := sinkD.io.resp.valid && sinkD.io.resp.bits.source === i.U
     m.io.sinke.valid := sinkE.io.resp.valid && sinkE.io.resp.bits.sink   === i.U
+    when (debugLogEnable && sinkE.io.resp.valid) {
+      printf(p"[SCHED-INNER-E-ROUTE] e_sink=0x${Hexadecimal(sinkE.io.resp.bits.sink)} candidate_mshr=${i} routed=${m.io.sinke.valid} mshr_valid=${m.io.status.valid} mshr_set=0x${Hexadecimal(m.io.status.bits.set)} mshr_tag=0x${Hexadecimal(m.io.status.bits.tag)}\n")
+    }
     m.io.sinkc.bits := sinkC.io.resp.bits
     m.io.sinkd.bits := sinkD.io.resp.bits
     m.io.sinke.bits := sinkE.io.resp.bits
@@ -177,6 +181,9 @@ class InclusiveCacheBankScheduler(params: InclusiveCacheParameters) extends Modu
   sourceB.io.req.valid := schedule.b.valid
   sourceC.io.req.valid := schedule.c.valid
   sourceD.io.req.valid := schedule.d.valid
+  when (debugLogEnable && sourceD.io.req.fire) {
+    printf(p"[SCHED-INNER-GRANT-ISSUE] mshr_idx=${mshr_select} inner_sink=0x${Hexadecimal(schedule.d.bits.sink)} source=0x${Hexadecimal(schedule.d.bits.source)} opcode=0x${Hexadecimal(schedule.d.bits.opcode)} set=0x${Hexadecimal(schedule.d.bits.set)} tag=0x${Hexadecimal(schedule.d.bits.tag)}\n")
+  }
   sourceE.io.req.valid := schedule.e.valid
   sourceX.io.req.valid := schedule.x.valid
 
@@ -314,7 +321,30 @@ class InclusiveCacheBankScheduler(params: InclusiveCacheParameters) extends Modu
 
   // Is there an MSHR free for this request?
   val mshr_validOH = Cat(mshrs.map(_.io.status.valid).reverse)
-  val mshr_free = (~mshr_validOH & prioFilter).orR
+  // Diagnostic only: correlate the ListBuffer head with every MSHR and expose
+  // the exact resource gate that prevents it from being selected.
+  val traceQueueHead = debugLogEnable && requests.io.valid.orR &&
+    requests.io.data.source === "h22".U
+  val traceHeadMshrMatch = mshrs.map { m =>
+    m.io.status.valid &&
+      m.io.status.bits.set === requests.io.data.set &&
+      m.io.status.bits.tag === requests.io.data.tag
+  }.reduce(_ || _)
+  when (traceQueueHead) {
+    printf(p"[SCHED-HEAD-TRACE] head_source=0x${Hexadecimal(requests.io.data.source)} head_set=0x${Hexadecimal(requests.io.data.set)} head_tag=0x${Hexadecimal(requests.io.data.tag)} head_crypto=${requests.io.data.cryptoLine} valid_vec=0x${Hexadecimal(requests.io.valid)} head_match=${traceHeadMshrMatch} mshr_valid=0x${Hexadecimal(mshr_validOH)} mshr_request=0x${Hexadecimal(mshr_request)} sched_sel=0x${Hexadecimal(mshr_selectOH)} sourceA_r=${sourceA.io.req.ready} sourceB_r=${sourceB.io.req.ready} sourceC_r=${sourceC.io.req.ready} sourceD_r=${sourceD.io.req.ready} sourceE_r=${sourceE.io.req.ready} sourceX_r=${sourceX.io.req.ready} dir_r=${directory.io.write.ready}\n")
+  }
+ mshrs.zipWithIndex.foreach { case (m, i) =>
+   when (traceQueueHead) {
+     printf(p"[SCHED-HEAD-MSHR] idx=${i} status_v=${m.io.status.valid} set=0x${Hexadecimal(m.io.status.bits.set)} tag=0x${Hexadecimal(m.io.status.bits.tag)} sched_v=${m.io.schedule.valid} sched_r=${m.io.schedule.ready} mreq=${mshr_request(i)} stall=${mshr_stall(i)} a=${m.io.schedule.bits.a.valid} b=${m.io.schedule.bits.b.valid} c=${m.io.schedule.bits.c.valid} d=${m.io.schedule.bits.d.valid} e=${m.io.schedule.bits.e.valid} x=${m.io.schedule.bits.x.valid} dir=${m.io.schedule.bits.dir.valid}\n")
+   }
+ }
+  (0 until 3*params.mshrs).foreach { q =>
+    val qData = requests.io.debug_data(q).asTypeOf(new FullRequest(params))
+    when (traceQueueHead && requests.io.valid(q)) {
+      printf(p"[SCHED-QUEUE-ENTRY] q=${q} ptr=0x${Hexadecimal(requests.io.debug_head(q))} source=0x${Hexadecimal(qData.source)} set=0x${Hexadecimal(qData.set)} tag=0x${Hexadecimal(qData.tag)} crypto=${qData.cryptoLine} prio=0x${Hexadecimal(qData.prio.asUInt)}\n")
+    }
+  }
+ val mshr_free = (~mshr_validOH & prioFilter).orR
 
   // Fanout the request to the appropriate handler (if any)
   val bypassQueue = schedule.reload && bypassMatches
@@ -343,6 +373,11 @@ class InclusiveCacheBankScheduler(params: InclusiveCacheParameters) extends Modu
       OHToUInt(lowerMatches1 << params.mshrs*0),
       OHToUInt(lowerMatches1 << params.mshrs*1),
       OHToUInt(lowerMatches1 << params.mshrs*2)))
+
+  when (debugLogEnable && (request.bits.source === "h22".U || requests.io.data.source === "h22".U) &&
+        (request.valid || requests.io.valid.orR || requests.io.push.valid || requests.io.pop.valid)) {
+    printf(p"[SCHED-REL-TRACE] req_v=${request.valid} req_r=${request.ready} req_fire=${request.fire} req_source=0x${Hexadecimal(request.bits.source)} req_set=0x${Hexadecimal(request.bits.set)} req_tag=0x${Hexadecimal(request.bits.tag)} req_crypto=${request.bits.cryptoLine} alloc=${alloc} queue=${queue} nestC=${nestC} blockC=${blockC} lower=0x${Hexadecimal(lowerMatches)} mshr_free=${mshr_free} alloc_case=${request_alloc_cases} push_v=${requests.io.push.valid} push_r=${requests.io.push.ready} push_fire=${requests.io.push.fire} push_idx=${requests.io.push.bits.index} pop_v=${requests.io.pop.valid} pop_fire=${requests.io.pop.fire} valid_vec=0x${Hexadecimal(requests.io.valid)} head_source=0x${Hexadecimal(requests.io.data.source)} head_set=0x${Hexadecimal(requests.io.data.set)} head_tag=0x${Hexadecimal(requests.io.data.tag)} head_crypto=${requests.io.data.cryptoLine} sched_sel=${mshr_select} sched_v=${mshr_selectOH.orR} sched_r=${mshr_selectOH.orR} reload=${schedule.reload}\n")
+  }
 
   val mshr_insertOH = ~(leftOR(~mshr_validOH) << 1) & ~mshr_validOH & prioFilter
   (mshr_insertOH.asBools zip mshrs) map { case (s, m) =>

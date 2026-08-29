@@ -254,6 +254,19 @@ class MSHR(params: InclusiveCacheParameters) extends Module
   io.schedule.valid := io.schedule.bits.a.valid || io.schedule.bits.b.valid || io.schedule.bits.c.valid ||
                        io.schedule.bits.d.valid || io.schedule.bits.e.valid || io.schedule.bits.x.valid ||
                        io.schedule.bits.dir.valid
+  when (debugLogEnable && request_valid && request.source === "h22".U) {
+    printf(p"[MSHR-REL-TRACE] source=0x${Hexadecimal(request.source)} set=0x${Hexadecimal(request.set)} tag=0x${Hexadecimal(request.tag)} crypto=${request.cryptoLine} meta_valid=${meta_valid} meta_hit=${meta.hit} meta_dirty=${meta.dirty} meta_crypto=${meta.cryptoLine} s_rel=${s_release} s_acq=${s_acquire} s_probeack=${s_probeack} s_exec=${s_execute} s_wb=${s_writeback} w_relack=${w_releaseack} w_rpfirst=${w_rprobeackfirst} w_ppfirst=${w_pprobeackfirst} w_grant=${w_grant} counter_get=${s_counter_acquire} counter_grant=${w_countergrant} counter_put=${s_counter_put} counter_ack=${w_counterput_ack} need_ctr_put=${need_counter_put} issue_a=${io.schedule.bits.a.valid} issue_c=${io.schedule.bits.c.valid} issue_d=${io.schedule.bits.d.valid} issue_dir=${io.schedule.bits.dir.valid} sched_v=${io.schedule.valid} sched_r=${io.schedule.ready} sched_fire=${io.schedule.fire} reload=${io.schedule.bits.reload}\n")
+  }
+  when (debugLogEnable && io.allocate.valid && io.allocate.bits.source === "h22".U) {
+    printf(p"[MSHR-REL-ALLOC] source=0x${Hexadecimal(io.allocate.bits.source)} set=0x${Hexadecimal(io.allocate.bits.set)} tag=0x${Hexadecimal(io.allocate.bits.tag)} crypto=${io.allocate.bits.cryptoLine} repeat=${io.allocate.bits.repeat}\n")
+  }
+  when (debugLogEnable && request_valid && (request.set === 0.U || request.source === "h22".U)) {
+    printf(p"[MSHR-WATCH-TRACE] source=0x${Hexadecimal(request.source)} set=0x${Hexadecimal(request.set)} tag=0x${Hexadecimal(request.tag)} prio=0x${Hexadecimal(request.prio.asUInt)} valid=${request_valid} meta_valid=${meta_valid} s_rel=${s_release} s_acq=${s_acquire} s_rprobe=${s_rprobe} s_pprobe=${s_pprobe} s_probeack=${s_probeack} s_exec=${s_execute} s_wb=${s_writeback} s_grantack=${s_grantack} s_flush=${s_flush} w_relack=${w_releaseack} w_rpfirst=${w_rprobeackfirst} w_ppfirst=${w_pprobeackfirst} w_grantfirst=${w_grantfirst} w_grant=${w_grant} w_grantack=${w_grantack} counter_get=${s_counter_acquire} counter_grant=${w_countergrant} counter_put=${s_counter_put} counter_ack=${w_counterput_ack}\n")
+  }
+  when (debugLogEnable && request_valid && request.set === "h040".U && request.tag === "h1000".U &&
+        (io.schedule.valid || io.schedule.fire || io.sinkd.valid || io.sinke.valid)) {
+    printf(p"[MSHR-BOUNDARY-WATCH] source=0x${Hexadecimal(request.source)} set=0x${Hexadecimal(request.set)} tag=0x${Hexadecimal(request.tag)} valid=${request_valid} meta_valid=${meta_valid} sched_v=${io.schedule.valid} sched_r=${io.schedule.ready} sched_fire=${io.schedule.fire} d_v=${io.schedule.bits.d.valid} d_opcode=0x${Hexadecimal(io.schedule.bits.d.bits.opcode)} d_source=0x${Hexadecimal(io.schedule.bits.d.bits.source)} d_sink=0x${Hexadecimal(io.schedule.bits.d.bits.sink)} e_v=${io.schedule.bits.e.valid} e_sink=0x${Hexadecimal(io.schedule.bits.e.bits.sink)} sinkd_v=${io.sinkd.valid} sinkd_opcode=0x${Hexadecimal(io.sinkd.bits.opcode)} sinkd_source=0x${Hexadecimal(io.sinkd.bits.source)} sinkd_sink=0x${Hexadecimal(io.sinkd.bits.sink)} sinke_v=${io.sinke.valid} sinke_sink=0x${Hexadecimal(io.sinke.bits.sink)} s_acq=${s_acquire} w_grant=${w_grant} s_grantack=${s_grantack} w_grantack=${w_grantack} w_grantfirst=${w_grantfirst} w_grantlast=${w_grantlast}\n")
+  }
   // Schedule completions
   when (io.schedule.ready) {
     when (issue_release_data_c && need_counter_put) {
@@ -604,6 +617,9 @@ class MSHR(params: InclusiveCacheParameters) extends Module
     }
   }
   when (io.sinkd.valid) {
+    when (debugLogEnable) {
+      printf(p"[MSHR-SINKD-TRACE] req_source=0x${Hexadecimal(request.source)} opcode=0x${Hexadecimal(io.sinkd.bits.opcode)} source=0x${Hexadecimal(io.sinkd.bits.source)} isCounter=${io.sinkd.bits.isCounter} last=${io.sinkd.bits.last} w_releaseack=${w_releaseack} s_release=${s_release}\n")
+    }
     when (io.sinkd.bits.isCounter && io.sinkd.bits.opcode === AccessAckData) {
       assert(!l2CryptoAssertEnable || !w_countergrant,
         "MSHR received duplicate counter grant")
@@ -629,6 +645,9 @@ class MSHR(params: InclusiveCacheParameters) extends Module
     .elsewhen (io.sinkd.bits.opcode === ReleaseAck) {
       w_releaseack := true.B
     }
+  }
+  when (debugLogEnable && io.sinke.valid) {
+    printf(p"[MSHR-SINKE-TRACE] source=0x${Hexadecimal(request.source)} set=0x${Hexadecimal(request.set)} tag=0x${Hexadecimal(request.tag)} sink=0x${Hexadecimal(io.sinke.bits.sink)} w_grantack_before=${w_grantack}\n")
   }
   when (io.sinke.valid) {
     w_grantack := true.B

@@ -42,7 +42,11 @@ class ListBuffer[T <: Data](params: ListBufferParameters[T]) extends Module
     val valid = UInt(params.queues.W)
     val pop   = Flipped(Valid(UInt(params.queueBits.W)))
     val data  = Output(params.gen)
+    // Diagnostic taps; they do not participate in queue control.
+    val debug_head = Output(Vec(params.queues, UInt(params.entryBits.W)))
+    val debug_data = Output(Vec(params.queues, params.gen))
   })
+  val debugLogEnable = PlusArg("inclusive_cache_debug_log", default = 0, width = 1) =/= 0.U
 
   val valid = RegInit(0.U(params.queues.W))
   val head  = Mem(params.queues, UInt(params.entryBits.W))
@@ -81,6 +85,14 @@ class ListBuffer[T <: Data](params: ListBufferParameters[T]) extends Module
   // Bypass push data to the peek port
   io.data := (if (!params.bypass) data.read(pop_head) else Mux(!pop_valid, io.push.bits.data, data.read(pop_head)))
   io.valid := (if (!params.bypass) valid else (valid | valid_set))
+  (0 until params.queues).foreach { q =>
+    io.debug_head(q) := head.read(q.U)
+    io.debug_data(q) := data.read(io.debug_head(q))
+  }
+
+  when (debugLogEnable && io.valid.orR) {
+    printf(p"[LISTBUF-TRACE] queues=${params.queues} entries=${params.entries} valid=0x${Hexadecimal(io.valid)} used=0x${Hexadecimal(used)} head_q=0x${Hexadecimal(io.pop.bits)} pop_v=${io.pop.valid} pop_fire=${io.pop.fire} push_v=${io.push.valid} push_r=${io.push.ready} push_fire=${io.push.fire} push_q=0x${Hexadecimal(io.push.bits.index)}\n")
+  }
 
   // It is an error to pop something that is not valid
   assert (!io.pop.fire || (io.valid)(io.pop.bits))

@@ -229,9 +229,10 @@ class GenKeyReq(implicit p: Parameters) extends BoomBundle()(p)
   with HasBoomUOP
 
 class LDQEntry(implicit p: Parameters) extends BoomBundle()(p)
-    with HasBoomUOP
+   with HasBoomUOP
 {
   val addr                = Valid(UInt(coreMaxAddrBits.W))
+  val original_addr       = UInt(coreMaxAddrBits.W)
   val addr_is_virtual     = Bool() // Virtual address, we got a TLB miss
   val addr_is_uncacheable = Bool() // Uncacheable, wait until head of ROB to execute
 
@@ -258,6 +259,7 @@ class STQEntry(implicit p: Parameters) extends BoomBundle()(p)
    with HasBoomUOP
 {
   val addr                = Valid(UInt(coreMaxAddrBits.W))
+  val original_addr       = UInt(coreMaxAddrBits.W)
   val addr_is_virtual     = Bool() // Virtual address, we got a TLB miss
   val data                = Valid(UInt(xLen.W))
 
@@ -486,6 +488,10 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
   io.core.debug.stq_execute_rob_idx := stq(stq_execute_head).bits.uop.rob_idx
   io.core.debug.stq_execute_addr := stq(stq_execute_head).bits.addr.bits
 
+  when (true.B) {
+    printf(p"[LSU-QUEUE-HEARTBEAT] cycle=0x${Hexadecimal(io.core.tsc_reg)} stq_head=${stq_head} stq_tail=${stq_tail} stq_commit=${stq_commit_head} stq_exec=${stq_execute_head} head_v=${stq(stq_head).valid.asUInt} head_addr_v=${stq(stq_head).bits.addr.valid.asUInt} head_data_v=${stq(stq_head).bits.data.valid.asUInt} head_committed=${stq(stq_head).bits.committed.asUInt} head_succeeded=${stq(stq_head).bits.succeeded.asUInt} head_uopc=0x${Hexadecimal(stq(stq_head).bits.uop.uopc)} head_pc=0x${Hexadecimal(stq(stq_head).bits.uop.debug_pc)} exec_v=${stq(stq_execute_head).valid.asUInt} exec_addr_v=${stq(stq_execute_head).bits.addr.valid.asUInt} exec_data_v=${stq(stq_execute_head).bits.data.valid.asUInt} exec_committed=${stq(stq_execute_head).bits.committed.asUInt} exec_succeeded=${stq(stq_execute_head).bits.succeeded.asUInt}\n")
+  }
+
 
 
   val clear_store     = WireInit(false.B)
@@ -630,6 +636,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
       ldq(ld_enq_idx).bits.st_dep_mask     := next_live_store_mask
 
       ldq(ld_enq_idx).bits.addr.valid      := false.B
+      ldq(ld_enq_idx).bits.original_addr   := 0.U
       ldq(ld_enq_idx).bits.executed        := false.B
       ldq(ld_enq_idx).bits.succeeded       := false.B
       ldq(ld_enq_idx).bits.order_fail      := false.B
@@ -646,6 +653,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
       stq(st_enq_idx).valid           := true.B
       stq(st_enq_idx).bits.uop        := io.core.dis_uops(w).bits
       stq(st_enq_idx).bits.addr.valid := false.B
+      stq(st_enq_idx).bits.original_addr := 0.U
       stq(st_enq_idx).bits.data.valid := false.B
       stq(st_enq_idx).bits.committed  := false.B
       stq(st_enq_idx).bits.succeeded  := false.B
@@ -684,6 +692,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
   val mem_xcpt_cause  = Wire(UInt())
   val mem_xcpt_uop    = Wire(new MicroOp)
   val mem_xcpt_vaddr  = Wire(UInt())
+  val mem_xcpt_original_vaddr = Wire(UInt())
 
 
   //---------------------------------------
@@ -949,8 +958,8 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
                         will_fire_stad_incoming (w) ||
                         will_fire_sta_incoming  (w)  , exe_req(w).bits.origin_addr,
                     // Mux(will_fire_sfence        (w)  , exe_req(w).bits.sfence.bits.addr,
-                    Mux(will_fire_load_retry    (w)  , ldq_retry_e.bits.addr.bits,
-                    Mux(will_fire_sta_retry     (w)  , stq_retry_e.bits.addr.bits,
+                    Mux(will_fire_load_retry    (w)  , ldq_retry_e.bits.original_addr,
+                    Mux(will_fire_sta_retry     (w)  , stq_retry_e.bits.original_addr,
                                                        0.U))))
 
   val exe_sfence = WireInit((0.U).asTypeOf(Valid(new rocket.SFenceReq)))
@@ -1083,6 +1092,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
     Mux(ae_ld(w), rocket.Causes.load_access.U,
                   rocket.Causes.store_access.U)))))))
   val mem_xcpt_vaddrs = RegNext(exe_tlb_vaddr)
+  val mem_xcpt_original_vaddrs = RegNext(exe_origin_vaddr)
 
   for (w <- 0 until memWidth) {
     assert (!(dtlb.io.req(w).valid && exe_tlb_uop(w).is_fence), "Fence is pretending to talk to the TLB")
@@ -1096,6 +1106,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
   mem_xcpt_cause := mem_xcpt_causes(0)
   mem_xcpt_uop   := mem_xcpt_uops(0)
   mem_xcpt_vaddr := mem_xcpt_vaddrs(0)
+  mem_xcpt_original_vaddr := mem_xcpt_original_vaddrs(0)
   var xcpt_found = mem_xcpt_valids(0)
   var oldest_xcpt_rob_idx = mem_xcpt_uops(0).rob_idx
   for (w <- 1 until memWidth) {
@@ -1106,6 +1117,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
       mem_xcpt_cause := mem_xcpt_causes(w)
       mem_xcpt_uop   := mem_xcpt_uops(w)
       mem_xcpt_vaddr := mem_xcpt_vaddrs(w)
+      mem_xcpt_original_vaddr := mem_xcpt_original_vaddrs(w)
     }
     xcpt_found = xcpt_found || mem_xcpt_valids(w)
     oldest_xcpt_rob_idx = Mux(is_older, mem_xcpt_uops(w).rob_idx, oldest_xcpt_rob_idx)
@@ -1304,6 +1316,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
       }
       ldq(ldq_idx).bits.addr.valid          := true.B
       ldq(ldq_idx).bits.addr.bits           := ld_addr
+      ldq(ldq_idx).bits.original_addr       := exe_origin_vaddr(w)
       ldq(ldq_idx).bits.uop.pdst            := exe_tlb_uop(w).pdst
       ldq(ldq_idx).bits.uop.ctrl            := exe_tlb_uop(w).ctrl
       ldq(ldq_idx).bits.addr_is_virtual     := exe_tlb_miss(w)
@@ -1320,6 +1333,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
      
       stq(stq_idx).bits.addr.valid := !pf_st(w) // Prevent AMOs from executing!
       stq(stq_idx).bits.addr.bits  := st_addr
+      stq(stq_idx).bits.original_addr := exe_origin_vaddr(w)
       stq(stq_idx).bits.uop.pdst   := exe_tlb_uop(w).pdst // Needed for AMOs
       stq(stq_idx).bits.addr_is_virtual := exe_tlb_miss(w)
       stq(stq_idx).bits.uop.ctrl   := exe_tlb_uop(w).ctrl 
@@ -1388,6 +1402,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
             io.ptw.status.dprv)
         }
         ldq(ldq_idx).bits.addr.bits := io.lsu_addr_resp(0).bits.addr
+        ldq(ldq_idx).bits.original_addr := io.lsu_addr_resp(0).bits.origin_addr
         ldq(ldq_idx).bits.addr.valid := true.B
         ldq(ldq_idx).bits.uop.pdst := io.lsu_addr_resp(0).bits.uop.pdst
         ldq(ldq_idx).bits.addr_is_virtual := true.B
@@ -1416,6 +1431,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
         (stq(stq_idx).bits.uop.debug_pc === io.lsu_addr_resp(0).bits.uop.debug_pc)
       when (stq_owner_match) {
         stq(stq_idx).bits.addr.bits := io.lsu_addr_resp(0).bits.addr
+        stq(stq_idx).bits.original_addr := io.lsu_addr_resp(0).bits.origin_addr
         stq(stq_idx).bits.addr.valid := true.B
         stq(stq_idx).bits.uop.pdst := io.lsu_addr_resp(0).bits.uop.pdst
         stq(stq_idx).bits.uop.ctrl := io.lsu_addr_resp(0).bits.uop.ctrl
@@ -1462,6 +1478,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
             io.ptw.status.dprv)
         }
         ldq(ldq_idx).bits.addr.bits := io.lsu_addr_resp(1).bits.addr
+        ldq(ldq_idx).bits.original_addr := io.lsu_addr_resp(1).bits.origin_addr
         ldq(ldq_idx).bits.uop.pdst := io.lsu_addr_resp(1).bits.uop.pdst
         ldq(ldq_idx).bits.uop.ctrl := io.lsu_addr_resp(1).bits.uop.ctrl
         ldq(ldq_idx).bits.addr_is_virtual := true.B
@@ -1482,6 +1499,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
 
       when (stq_owner_match) {
         stq(stq_idx).bits.addr.bits := io.lsu_addr_resp(1).bits.addr
+        stq(stq_idx).bits.original_addr := io.lsu_addr_resp(1).bits.origin_addr
         stq(stq_idx).bits.uop.ctrl   := io.lsu_addr_resp(1).bits.uop.ctrl
         stq(stq_idx).bits.uop.pdst := io.lsu_addr_resp(1).bits.uop.pdst
         stq(stq_idx).bits.addr_is_virtual := true.B
@@ -1866,6 +1884,7 @@ class LSU(implicit p: Parameters, edge: TLEdgeOut) extends BoomModule()(p)
   r_xcpt.uop.br_mask := GetNewBrMask(io.core.brupdate, xcpt_uop)
   r_xcpt.cause       := Mux(use_mem_xcpt, mem_xcpt_cause, MINI_EXCEPTION_MEM_ORDERING)
   r_xcpt.badvaddr    := mem_xcpt_vaddr // TODO is there another register we can use instead?
+  r_xcpt.original_badvaddr := mem_xcpt_original_vaddr
 
   io.core.lxcpt.valid := r_xcpt_valid && !io.core.exception && !IsKilledByBranch(io.core.brupdate, r_xcpt.uop)
   io.core.lxcpt.bits  := r_xcpt

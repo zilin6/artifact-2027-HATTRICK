@@ -36,7 +36,7 @@ import chisel3.util._
 import org.chipsalliance.cde.config.Parameters
 import freechips.rocketchip.rocket.Instructions._
 import freechips.rocketchip.tile.{TraceBundle}
-import freechips.rocketchip.rocket.{Causes, PRV, TracedInstruction}
+import freechips.rocketchip.rocket.{Causes, PRV, TracedInstruction, CacheCryptoDebugLog}
 import freechips.rocketchip.util.{Str, UIntIsOneOf, CoreMonitorBundle}
 import freechips.rocketchip.devices.tilelink.{PLICConsts, CLINTConsts}
 
@@ -51,6 +51,7 @@ import boom.v3.util._
 class BoomCore()(implicit p: Parameters) extends BoomModule
   with HasBoomFrontendParameters // TODO: Don't add this trait
 {
+  private val coreCryptoDebugLogEnable = CacheCryptoDebugLog.runtimeEnable
   val io = IO(new Bundle {
     val hartid = Input(UInt(hartIdLen.W))
     val interrupts = Input(new freechips.rocketchip.rocket.CoreInterrupts(false))
@@ -1134,6 +1135,7 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
   rob.io.csr_replay.bits.uop := csr_exe_unit.io.iresp.bits.uop
   rob.io.csr_replay.bits.cause := MINI_EXCEPTION_CSR_REPLAY
   rob.io.csr_replay.bits.badvaddr := DontCare
+  rob.io.csr_replay.bits.original_badvaddr := DontCare
 
   // Extra I/O
   // Delay retire/exception 1 cycle
@@ -1147,6 +1149,13 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
   // Cause not valid for for CALL or BREAKPOINTs (CSRFile will override it).
   csr.io.cause     := RegNext(rob.io.com_xcpt.bits.cause)
   csr.io.ungated_clock := clock
+
+  val committedPageFault = csr.io.exception && csr.io.cause.isOneOf(
+    Causes.load_page_fault.U,
+    Causes.store_page_fault.U,
+    Causes.fetch_page_fault.U)
+  custom_csrs.originalFaultVaddrSet := committedPageFault
+  custom_csrs.originalFaultVaddrSdata := RegNext(rob.io.com_xcpt.bits.original_badvaddr)
 
   val tval_valid = csr.io.exception &&
     csr.io.cause.isOneOf(
@@ -1470,6 +1479,12 @@ class BoomCore()(implicit p: Parameters) extends BoomModule
     idle_cycles := 0.U
   }
   assert (!(idle_cycles.value(13)), "Pipeline has hung.")
+
+  // Periodic core heartbeat closes the fetch backpressure chain at decode,
+  // dispatch, and the ROB head without changing any pipeline behavior.
+  when (debug_tsc_reg(7, 0) === 0.U) {
+    _root_.chisel3.printf(p"[CORE-PIPE-HEARTBEAT] cycle=0x${Hexadecimal(debug_tsc_reg)} idle=0x${Hexadecimal(idle_cycles.value)} fetch_v=${io.ifu.fetchpacket.valid.asUInt} fetch_r=${io.ifu.fetchpacket.ready.asUInt} dec_valid=0x${Hexadecimal(dec_valids.asUInt)} dec_fire=0x${Hexadecimal(dec_fire.asUInt)} dec_ready=${dec_ready.asUInt} dis_valid=0x${Hexadecimal(dis_valids.asUInt)} dis_fire=0x${Hexadecimal(dis_fire.asUInt)} dis_ready=${dis_ready.asUInt} hazards=0x${Hexadecimal(VecInit(dis_hazards).asUInt)} uses_stq=${dis_uops(0).uses_stq.asUInt} stq_full=0x${Hexadecimal(io.lsu.stq_full.asUInt)} rob_ready=${rob.io.ready.asUInt} rob_empty=${rob.io.empty.asUInt} head_v=${rob.io.debug.head_valid.asUInt} head_busy=${rob.io.debug.head_busy.asUInt} stq_h=${io.lsu.debug.stq_head} stq_t=${io.lsu.debug.stq_tail} stq_c=${io.lsu.debug.stq_commit_head} stq_e=${io.lsu.debug.stq_execute_head} stq_hv=${io.lsu.debug.stq_head_valid.asUInt} stq_hav=${io.lsu.debug.stq_head_addr_valid.asUInt} stq_hdv=${io.lsu.debug.stq_head_data_valid.asUInt} stq_hcomm=${io.lsu.debug.stq_head_committed.asUInt} stq_hsucc=${io.lsu.debug.stq_head_succeeded.asUInt} stq_hpc=0x${Hexadecimal(io.lsu.debug.stq_head_pc)} stq_haddr=0x${Hexadecimal(io.lsu.debug.stq_head_addr)} stq_ev=${io.lsu.debug.stq_execute_valid.asUInt} stq_eav=${io.lsu.debug.stq_execute_addr_valid.asUInt} stq_edv=${io.lsu.debug.stq_execute_data_valid.asUInt} stq_ecomm=${io.lsu.debug.stq_execute_committed.asUInt} stq_esucc=${io.lsu.debug.stq_execute_succeeded.asUInt} stq_epc=0x${Hexadecimal(io.lsu.debug.stq_execute_pc)} stq_eaddr=0x${Hexadecimal(io.lsu.debug.stq_execute_addr)}\n")
+  }
 
   if (usingFPU) {
     fp_pipeline.io.debug_tsc_reg := debug_tsc_reg

@@ -134,6 +134,16 @@ class BoomTraceBundle extends Bundle {
   */
 class BoomCustomCSRs(implicit p: Parameters) extends freechips.rocketchip.tile.CustomCSRs
   with HasBoomCoreParameters {
+  /** Original VA for the most recently committed page fault. */
+  // 0x7c4 is a custom machine-mode CSR (bits 9:8 = 3), so reads from
+  // S/U mode are rejected by the architectural CSR privilege check.
+  val originalFaultVaddrCSRId = 0x7c4
+  def originalFaultVaddrCSR =
+    Some(CustomCSR(originalFaultVaddrCSRId, BigInt("ffffffffffffffff", 16), Some(0)))
+  def originalFaultVaddr = getOrElse(originalFaultVaddrCSR, _.value, 0.U)
+  def originalFaultVaddrSet = getOrElse(originalFaultVaddrCSR, _.set, false.B)
+  def originalFaultVaddrSdata = getOrElse(originalFaultVaddrCSR, _.sdata, 0.U)
+
   override def chickenCSR = {
     val params = tileParams.core.asInstanceOf[BoomCoreParams]
     val mask = BigInt(
@@ -154,7 +164,8 @@ class BoomCustomCSRs(implicit p: Parameters) extends freechips.rocketchip.tile.C
   // def marchid = CustomCSR.constant(CSRs.marchid, BigInt(2)) 
 
   // Append chickenCSR after the base custom CSR set defined in rocket-chip.
-  override def decls: Seq[CustomCSR] = super.decls ++ chickenCSR.toSeq
+  override def decls: Seq[CustomCSR] =
+    super.decls ++ chickenCSR.toSeq ++ originalFaultVaddrCSR.toSeq
 }
 
 /**

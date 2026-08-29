@@ -1234,6 +1234,10 @@ class BoomFrontendModule(outer: BoomFrontend) extends LazyModuleImp(outer)
   }
 
   f4_ready := f4.io.enq.ready
+  // Periodic heartbeat captures frontend state when no event trace fires.
+  when (feCryptoDebugLogEnable && (feDebugCycle(7, 0) === 0.U)) {
+    _root_.chisel3.printf(p"[FE-FETCH-HEARTBEAT] cycle=${feDebugCycle} s0=${s0_valid.asUInt} s1=${s1_valid.asUInt} s2=${s2_valid.asUInt} pc=0x${Hexadecimal(s2_vpc)} crypto=${s2_addr_crypto_mode.asUInt} wait_ic=${s2_wait_for_icache.asUInt} wait_f3=${s2_wait_for_f3.asUInt} result_ready=${s2_result_ready_engine.asUInt} f1_clear=${f1_clear.asUInt} f2_clear=${f2_clear.asUInt} f3_clear=${f3_clear.asUInt} f3ev=${f3.io.enq.valid.asUInt} f3er=${f3.io.enq.ready.asUInt} f3df=${f3.io.deq.valid.asUInt} f3dr=${f3.io.deq.ready.asUInt} f3stage=${f3_stage_valid.asUInt} hold=${f3_icache_data_hold_valid.asUInt} waits3=${f3_head_waiting_for_icache_s3_data.asUInt} waitf4=${f3_head_waiting_for_f4.asUInt} f4r=${f4_ready.asUInt} f4ev=${f4.io.enq.valid.asUInt} f4er=${f4.io.enq.ready.asUInt} f4dv=${f4.io.deq.valid.asUInt} f4dr=${f4.io.deq.ready.asUInt} f4delay=${f4_delay.asUInt} fb_enq_r=${fb.io.enq.ready.asUInt} ftq_enq_r=${ftq.io.enq.ready.asUInt} ftq_deq_v=${ftq.io.deq.valid.asUInt} ftq_redirect_v=${ftq.io.redirect.valid.asUInt} cpu_fetch_v=${io.cpu.fetchpacket.valid.asUInt} cpu_fetch_r=${io.cpu.fetchpacket.ready.asUInt} cpu_redirect=${io.cpu.redirect_val.asUInt} cpu_sfence=${io.cpu.sfence.valid.asUInt} ic_req_v=${icache.io.req.valid.asUInt} ic_req_r=${icache.io.req.ready.asUInt} ic_resp_v=${icache.io.resp.valid.asUInt} ic_late_v=${icache.io.s2_hit_late.valid.asUInt} ic_late_r=${icache.io.s2_hit_late.ready.asUInt} ic_late_resp=${icache.io.late_resp.valid.asUInt}\n")
+  }
   // Original BOOM v3:
   // f4.io.enq.valid := f3.io.deq.valid && !f3_clear
   f4.io.enq.valid := f3_stage_valid && !f3_clear

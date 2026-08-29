@@ -505,6 +505,7 @@ class MemAddrCalcUnit(implicit p: Parameters)
                                        sum(63,vaddrBits) =/= 0.U)
   val effective_address = WireInit(0.U((vaddrBits+1).W))
   effective_address := Cat(ea_sign, sum(vaddrBits-1,0)).asUInt
+  io.resp.bits.origin_addr := Cat(ea_sign, sum(vaddrBits-1,0)).asUInt
 
   // when (sum(63,58).orR )
   // {

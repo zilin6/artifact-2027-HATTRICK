@@ -1,8 +1,10 @@
 # RTL Source Artifact
 
 This directory contains a source-only RTL snapshot for the submitted design. It
-is intentionally copied without Git metadata, generated build products, logs,
-waveforms, simulator binaries, or bitstream files.
+includes the current working-tree changes in BOOM, Rocket Chip,
+inclusive-cache, and Chipyard. It is intentionally copied without Git metadata,
+generated build products, logs, waveforms, simulator binaries, or bitstream
+files.
 
 The recommended RTL build flow is to restore this snapshot onto an official
 Chipyard `1.13.0` workspace. The official Chipyard commit is the reproducible

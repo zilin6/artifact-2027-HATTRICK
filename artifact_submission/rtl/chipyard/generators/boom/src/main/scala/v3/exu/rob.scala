@@ -159,6 +159,7 @@ class CommitExceptionSignals(implicit p: Parameters) extends BoomBundle
   val pc_lob     = UInt(log2Ceil(icBlockBytes).W)
   val cause      = UInt(xLen.W)
   val badvaddr   = UInt(xLen.W)
+  val original_badvaddr = UInt(xLen.W)
 // The ROB needs to tell the FTQ if there's a pipeline flush (and what type)
 // so the FTQ can drive the frontend with the correct redirected PC.
   val flush_typ  = FlushTypes()
@@ -201,6 +202,8 @@ class Exception(implicit p: Parameters) extends BoomBundle
   val uop = new MicroOp()
   val cause = Bits(log2Ceil(freechips.rocketchip.rocket.Causes.all.max+2).W)
   val badvaddr = UInt(coreMaxAddrBits.W)
+  // Address before optional virtual-address encryption.
+  val original_badvaddr = UInt(coreMaxAddrBits.W)
 }
 
 /**
@@ -278,6 +281,7 @@ class Rob(
   val r_xcpt_val       = RegInit(false.B)
   val r_xcpt_uop       = Reg(new MicroOp())
   val r_xcpt_badvaddr  = Reg(UInt(coreMaxAddrBits.W))
+  val r_xcpt_original_badvaddr = Reg(UInt(coreMaxAddrBits.W))
   io.flush_frontend := r_xcpt_val
 
   //--------------------------------------------------
@@ -647,6 +651,7 @@ class Rob(
   io.com_xcpt.bits.cause := r_xcpt_uop.exc_cause
 
   io.com_xcpt.bits.badvaddr := Sext(r_xcpt_badvaddr, xLen)
+  io.com_xcpt.bits.original_badvaddr := Sext(r_xcpt_original_badvaddr, xLen)
   val insn_sys_pc2epc =
     rob_head_vals.reduce(_|_) && PriorityMux(rob_head_vals, io.commit.uops.map{u => u.is_sys_pc2epc})
 
@@ -734,6 +739,7 @@ class Rob(
         next_xcpt_uop           := new_xcpt.uop
         next_xcpt_uop.exc_cause := new_xcpt.cause
         r_xcpt_badvaddr         := new_xcpt.badvaddr
+        r_xcpt_original_badvaddr := new_xcpt.original_badvaddr
       }
     } .elsewhen (!r_xcpt_val && enq_xcpts.reduce(_|_)) {
       val idx = enq_xcpts.indexWhere{i: Bool => i}
@@ -742,6 +748,7 @@ class Rob(
       r_xcpt_val      := true.B
       next_xcpt_uop   := io.enq_uops(idx)
       r_xcpt_badvaddr := AlignPCToBoundary(io.xcpt_fetch_pc, icBlockBytes) | io.enq_uops(idx).pc_lob
+      r_xcpt_original_badvaddr := AlignPCToBoundary(io.xcpt_fetch_pc, icBlockBytes) | io.enq_uops(idx).pc_lob
 
     }
   }

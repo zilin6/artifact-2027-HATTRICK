@@ -2,7 +2,7 @@
 
 let
   submodules = lib.filterAttrs (_: v: v ? src) (pkgs.callPackage ./_sources/generated.nix { });
-  makeRemote = module: "https://github.com/${module.src.owner}/${module.src.repo}.git";
+  makeRemote = module: "git@github.com:${module.src.owner}/${module.src.repo}.git";
 in
 {
   setupHook = makeSetupHook { name = "submodules-setup.sh"; } (writeText "submodules-setup.sh" (''

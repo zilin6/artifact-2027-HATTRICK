@@ -17,6 +17,13 @@ trait HasMissInfo extends Bundle with HasL1HellaCacheParameters {
   val way_en = Bits(nWays.W)
 }
 
+// L1-only crypto state.  The TileLink metadata continues to carry only
+// epoch; the eight byte counters stay beside each cache line in L1D.
+class L1CryptoCounter(implicit p: Parameters) extends Bundle {
+  val epoch = UInt(p(CacheCryptoCounterBitsKey).W)
+  val wordCtr = Vec(8, UInt(8.W))
+}
+
 class L1DataReadReq(implicit p: Parameters) extends L1HellaCacheBundle()(p) {
   val way_en = Bits(nWays.W)
   val addr   = Bits(untagBits.W)
@@ -25,14 +32,14 @@ class L1DataReadReq(implicit p: Parameters) extends L1HellaCacheBundle()(p) {
 class L1DataReadResp(implicit p: Parameters) extends L1HellaCacheBundle()(p) {
   val data = Bits(encRowBits.W)
   // Counter returned from the same cache-line snapshot as "data".
-  val counter = UInt(p(CacheCryptoCounterBitsKey).W)
+  val counter = new L1CryptoCounter
 }
 
 class L1DataWriteReq(implicit p: Parameters) extends L1DataReadReq()(p) {
   val wmask  = Bits(rowWords.W)
   val data   = Bits(encRowBits.W)
   // Optional line-level counter update committed with the same data-array write.
-  val counter = UInt(p(CacheCryptoCounterBitsKey).W)
+  val counter = new L1CryptoCounter
   val counter_wen = Bool()
 }
 

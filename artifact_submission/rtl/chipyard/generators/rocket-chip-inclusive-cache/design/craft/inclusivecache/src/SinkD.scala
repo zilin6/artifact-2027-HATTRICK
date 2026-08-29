@@ -78,6 +78,9 @@ class SinkD(params: InclusiveCacheParameters) extends Module
   val refillMeta = d.bits.user.lift(CacheCryptoRefillMeta)
   val dCryptoLine = WireDefault(false.B)
   refillMeta.foreach { m => dCryptoLine := m.cryptoLine }
+  when (debugLogEnable && d.valid) {
+    printf(p"[SINKD-TRACE] source=0x${Hexadecimal(d.bits.source)} opcode=0x${Hexadecimal(d.bits.opcode)} first=${first} last=${last} beat=${beat} isCounter=${isCounterResp} crypto=${dCryptoLine} ready=${d.ready} fire=${d.fire} sink=0x${Hexadecimal(d.bits.sink)} denied=${d.bits.denied}\n")
+  }
 
   // outer 返回响应沿用 Scheduler 的 source 编码：
   //   [mshr_select | source_type]
